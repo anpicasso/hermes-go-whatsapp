@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/anpicasso/hermes-go-whatsapp/actions/workflows/ci.yml/badge.svg)](https://github.com/anpicasso/hermes-go-whatsapp/actions/workflows/ci.yml)
 
-A Hermes Agent plugin that connects an existing [GOWA](https://github.com/aldinokemal/go-whatsapp-web-multidevice) server or installs a pinned local one, registers its native MCP endpoint, and adds the device-management operations that MCP does not expose.
+A Hermes Agent `go-whatsapp` plugin that connects an existing [GOWA](https://github.com/aldinokemal/go-whatsapp-web-multidevice) server or installs a pinned local one, registers its native MCP endpoint, and adds the device-management operations that MCP does not expose.
 
 ## What it provides
 
@@ -39,6 +39,17 @@ hermes gowa setup
 
 Setup is idempotent: rerunning it reinstalls the same verified release, preserves existing generated credentials, updates configuration, and restarts the service.
 
+Upgrading from plugin ID `gowa` (v0.4.0 or earlier) is a one-time rename:
+
+```bash
+hermes plugins disable gowa
+hermes plugins remove gowa
+hermes plugins install anpicasso/hermes-go-whatsapp --enable
+hermes gowa setup
+```
+
+The `gowa` CLI command, MCP server name, `GOWA_*` credentials, and native service names intentionally remain unchanged; only the Hermes plugin ID becomes `go-whatsapp`.
+
 Setup adds `mcp_servers.gowa` to Hermes configuration, so reload MCP connections after it finishes. Run `/reload-mcp` in the current Hermes session, or restart the gateway from an external shell with `hermes gateway restart`. Then start a new Hermes session so its tool catalog includes both the native GOWA MCP tools and the plugin's device tools.
 
 The first local setup asks the kernel for an available ephemeral loopback port; it does not guess random ports or maintain a pool. The selected port is persisted in the platform's private GOWA environment file and reused on later runs. An explicit occupied `--port` fails before download. There is an unavoidable tiny bind/release/start race, so setup also verifies the authenticated `/app/info` response and exact pinned version after startup; it fails rather than silently connecting to the wrong process.
@@ -71,7 +82,7 @@ Remote URLs require HTTPS and a bearer token. The token is saved as `GOWA_AUTH_H
 
 ## What setup changes
 
-In existing-server mode, setup changes only the active Hermes profile: `GOWA_BASE_URL`, optional `GOWA_AUTH_HEADER`, `mcp_servers.gowa`, and `plugins.entries.gowa.settings.base_url`. It does not download GOWA, write native service files, or manage that server's lifetime.
+In existing-server mode, setup changes only the active Hermes profile: `GOWA_BASE_URL`, optional `GOWA_AUTH_HEADER`, `mcp_servers.gowa`, and `plugins.entries.go-whatsapp.settings.base_url`. It does not download GOWA, write native service files, or manage that server's lifetime.
 
 In local-install mode, the installer chooses one hard-coded release asset for the current supported platform and verifies its SHA-256 before reading the exact ZIP member:
 
@@ -153,7 +164,7 @@ Hermes session
   │    ├─ whatsapp_schedule
   │    └─ whatsapp_app
   │
-  └─ gowa plugin ───────► GOWA REST
+  └─ go-whatsapp plugin ─► GOWA REST
        ├─ gowa_devices
        ├─ gowa_device_login
        └─ gowa_device_remove
@@ -203,12 +214,12 @@ The remaining read-only candidates were also reviewed and deliberately omitted. 
 
 ## Configuration
 
-Plugin settings live under `plugins.entries.gowa.settings`:
+Plugin settings live under `plugins.entries.go-whatsapp.settings`:
 
 ```yaml
 plugins:
   entries:
-    gowa:
+    go-whatsapp:
       settings:
         base_url: http://127.0.0.1:49152  # setup writes the selected or external URL
         timeout_seconds: 15
@@ -240,7 +251,7 @@ Every platform then uses the same application checks:
 
 ```bash
 hermes mcp test gowa
-hermes plugins doctor ~/.hermes/plugins/gowa --ci
+hermes plugins doctor ~/.hermes/plugins/go-whatsapp --ci
 hermes tools list
 ```
 
@@ -292,8 +303,9 @@ Then remove the common Hermes configuration and plugin:
 hermes config unset mcp_servers.gowa
 hermes config unset GOWA_BASE_URL
 hermes config unset GOWA_AUTH_HEADER
-hermes config unset plugins.entries.gowa.settings.base_url
-hermes plugins remove gowa
+hermes config unset plugins.entries.go-whatsapp.settings.base_url
+hermes config unset plugins.entries.gowa.settings.base_url  # stale v0.4.0-and-earlier key, if present
+hermes plugins remove go-whatsapp
 ```
 
 For an externally managed GOWA, skip all supervisor, runtime, binary, and service-environment steps. Delete the runtime backup only after deciding that the WhatsApp session keys and local chat data are no longer needed.

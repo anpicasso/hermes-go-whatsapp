@@ -333,6 +333,7 @@ class InstallerTests(unittest.TestCase):
         INSTALLER._configure_hermes("http://127.0.0.1:3456", "Basic obviously-fake", setter)
         values = {key: value for key, value, _ in writes}
         self.assertEqual(values["mcp_servers.gowa.url"], "http://127.0.0.1:3456/mcp")
+        self.assertEqual(values["plugins.entries.go-whatsapp.settings.base_url"], "http://127.0.0.1:3456")
         self.assertEqual(
             values["mcp_servers.gowa.headers.Authorization"], "${GOWA_AUTH_HEADER}"
         )

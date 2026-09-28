@@ -191,7 +191,7 @@ def _download_qr(url: str) -> str:
     if not png.startswith(b"\x89PNG\r\n\x1a\n"):
         raise GowaError("GOWA QR response was not a PNG")
     state = getattr(getattr(_CTX, "state", None), "data_dir", None)
-    target_dir = Path(state) if state else Path.home() / ".hermes/plugin-data/gowa"
+    target_dir = Path(state) if state else Path.home() / ".hermes/plugin-data/go-whatsapp"
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / "login-qr.png"
     # ponytail: keep one private QR per profile; add per-device files only if concurrent pairing matters.
@@ -446,7 +446,7 @@ def _demo() -> None:
             server.server_close()
             globals()["_CTX"] = old_ctx
             globals()["_auth_header"] = old_auth_header
-    print("gowa plugin self-check OK")
+    print("go-whatsapp plugin self-check OK")
 
 
 if __name__ == "__main__":

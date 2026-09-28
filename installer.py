@@ -291,7 +291,7 @@ def _verify_existing(base_url: str, auth_header: str | None) -> str:
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "hermes-go-whatsapp-setup", "version": "0.4.0"},
+                "clientInfo": {"name": "hermes-go-whatsapp-setup", "version": "0.4.1"},
             },
         }
     ).encode("utf-8")
@@ -521,7 +521,7 @@ def _configure_hermes(
         ("GOWA_BASE_URL", base_url),
         ("mcp_servers.gowa.url", f"{base_url}/mcp"),
         ("mcp_servers.gowa.connect_timeout", "15"),
-        ("plugins.entries.gowa.settings.base_url", base_url),
+        ("plugins.entries.go-whatsapp.settings.base_url", base_url),
     ):
         setter(key, value, force=True)
     if auth_header:
