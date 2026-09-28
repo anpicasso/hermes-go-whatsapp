@@ -1,0 +1,24 @@
+name: gowa
+version: 0.2.0
+kind: standalone
+manifest_version: 2
+requires_hermes: ">=0.21.5"
+description: Pinned GOWA installer plus the REST device-management tools missing from its native MCP server.
+author: anpicasso
+license: MIT
+homepage: https://github.com/anpicasso/hermes-go-whatsapp
+tags: [whatsapp, mcp, devices]
+provides_tools:
+  - gowa_devices
+  - gowa_device_login
+  - gowa_device_remove
+capabilities: []
+config_schema:
+  base_url:
+    type: string
+    default: http://127.0.0.1:3000
+    description: GOWA REST origin, optionally including APP_BASE_PATH. Plain HTTP is accepted only on loopback.
+  timeout_seconds:
+    type: number
+    default: 15
+    description: REST request timeout for ordinary operations (1-60 seconds).

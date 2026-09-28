@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.log
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+*.db
+*.db-shm
+*.db-wal
+storages/
+statics/
+dist/
+build/
