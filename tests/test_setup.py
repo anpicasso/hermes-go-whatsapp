@@ -5,11 +5,13 @@ import importlib.util
 import io
 import json
 import os
+import plistlib
 import socket
 import sys
 import tempfile
 import threading
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,10 +35,10 @@ sys.modules[INSTALLER_SPEC.name] = INSTALLER
 INSTALLER_SPEC.loader.exec_module(INSTALLER)
 
 
-def archive(payload: bytes = b"fake-gowa-binary") -> bytes:
+def archive(payload: bytes = b"fake-gowa-binary", member: str = INSTALLER.ARCHIVE_MEMBER) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
-        bundle.writestr(INSTALLER.ARCHIVE_MEMBER, payload)
+        bundle.writestr(member, payload)
     return buffer.getvalue()
 
 
@@ -449,6 +451,92 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", unit)
             self.assertIn("WorkingDirectory=%h/.local/share/gowa/runtime", unit)
             self.assertNotIn('WorkingDirectory="', unit)
+
+    def test_release_assets_cover_supported_native_hosts(self) -> None:
+        expected = {
+            ("Linux", "amd64"): ("whatsapp_9.5.0_linux_amd64.zip", "linux-amd64"),
+            ("Darwin", "x86_64"): ("whatsapp_9.5.0_darwin_amd64.zip", "darwin-amd64"),
+            ("Darwin", "aarch64"): ("whatsapp_9.5.0_darwin_arm64.zip", "darwin-arm64"),
+            ("Windows", "AMD64"): ("whatsapp_9.5.0_windows_amd64.zip", "windows-amd64.exe"),
+        }
+        for (system, machine), (asset, member) in expected.items():
+            with self.subTest(system=system, machine=machine):
+                name, digest, actual_member = INSTALLER._release_asset(
+                    system, INSTALLER._normalized_machine(machine)
+                )
+                self.assertEqual((name, actual_member), (asset, member))
+                self.assertEqual(len(digest), 64)
+        with self.assertRaisesRegex(INSTALLER.SetupError, "supports Linux"):
+            INSTALLER._release_asset("Windows", "arm64")
+
+    def test_launch_agent_is_private_restart_on_failure_and_secret_free(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            credential, _ = INSTALLER._configure_files(home, 3456, "Darwin")
+            plist_path = INSTALLER._install_launch_agent(home)
+            values = plistlib.loads(plist_path.read_bytes())
+            self.assertEqual(values["Label"], "com.hermes.gowa")
+            self.assertEqual(values["ProgramArguments"][-1], "rest")
+            self.assertEqual(values["WorkingDirectory"], str(home / ".local/share/gowa/runtime"))
+            self.assertEqual(values["KeepAlive"], {"SuccessfulExit": False})
+            self.assertEqual(values["ExitTimeOut"], 20)
+            self.assertEqual(values["Umask"], 0o077)
+            self.assertEqual(values["StandardOutPath"], "/dev/null")
+            self.assertNotIn(credential, plist_path.read_text())
+            self.assertEqual(plist_path.stat().st_mode & 0o777, 0o600)
+            self.assertTrue((home / ".local/share/gowa/runtime/.env").exists())
+            self.assertEqual(INSTALLER._managed_port(home, "Darwin"), 3456)
+
+    def test_windows_task_uses_interactive_token_and_secret_free_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            local = home / "LocalAppData"
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local)}, clear=False):
+                credential, _ = INSTALLER._configure_files(home, 3456, "Windows")
+                payload = archive(member="windows-amd64.exe")
+                binary = INSTALLER._install_binary(
+                    home,
+                    payload,
+                    hashlib.sha256(payload).hexdigest(),
+                    "windows-amd64.exe",
+                    "Windows",
+                )
+                task_path = INSTALLER._install_windows_task(home, binary, r"DOMAIN\User")
+                raw = task_path.read_bytes()
+                self.assertTrue(raw.startswith((b"\xff\xfe", b"\xfe\xff")))
+                root = ET.fromstring(raw)
+                ns = {"t": INSTALLER._TASK_NS}
+                self.assertEqual(root.findtext(".//t:LogonType", namespaces=ns), "InteractiveToken")
+                self.assertEqual(root.findtext(".//t:RunLevel", namespaces=ns), "LeastPrivilege")
+                self.assertEqual(root.findtext(".//t:ExecutionTimeLimit", namespaces=ns), "PT0S")
+                self.assertEqual(root.findtext(".//t:TimeTrigger/t:Repetition/t:Interval", namespaces=ns), "PT1M")
+                self.assertIsNone(root.find(".//t:TimeTrigger/t:Repetition/t:Duration", ns))
+                arguments = root.findtext(".//t:Arguments", namespaces=ns) or ""
+                self.assertIn("-File", arguments)
+                self.assertNotIn(credential, arguments)
+                script = (local / "gowa/run.ps1").read_text(encoding="utf-8-sig")
+                self.assertIn("1>$null", script)
+                self.assertIn("2>", script)
+                self.assertNotIn(credential, script)
+                env_path = local / "gowa/runtime/.env"
+                self.assertEqual(INSTALLER._env_values(env_path)["APP_PORT"], "3456")
+                self.assertEqual(INSTALLER._managed_port(home, "Windows"), 3456)
+                self.assertFalse((local / "gowa/lib/current").exists())
+
+    def test_windows_identity_and_acl_use_sid_without_secrets(self) -> None:
+        identity = INSTALLER.subprocess.CompletedProcess(
+            [], 0, stdout='"DOMAIN\\User","S-1-5-21-123"\r\n', stderr=""
+        )
+        secured = INSTALLER.subprocess.CompletedProcess([], 0, stdout="processed", stderr="")
+        with mock.patch.object(INSTALLER.subprocess, "run", side_effect=[identity, secured]) as run:
+            user, sid = INSTALLER._windows_identity()
+            INSTALLER._secure_windows_tree(Path(r"C:\Users\User\AppData\Local\gowa"), sid)
+        self.assertEqual((user, sid), (r"DOMAIN\User", "S-1-5-21-123"))
+        acl = run.call_args_list[1].args[0]
+        self.assertIn("*S-1-5-21-123:(OI)(CI)F", acl)
+        self.assertIn("*S-1-5-18:(OI)(CI)F", acl)
+        self.assertIn("/inheritance:r", acl)
+        self.assertIn("/T", acl)
 
 
 if __name__ == "__main__":

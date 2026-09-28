@@ -14,17 +14,21 @@ This plugin connects to a GOWA process that holds WhatsApp linked-device keys. I
 
 Local `hermes gowa setup`:
 
-1. Downloads one hard-coded GitHub release asset over HTTPS.
+1. Selects one hard-coded GOWA v9.5.0 release asset for Linux x86_64, macOS x86_64/arm64, or Windows x86_64 and downloads it over HTTPS.
 2. Rejects archives larger than 64 MiB.
-3. Verifies the archive against the pinned SHA-256 before reading it.
-4. Reads only the exact `linux-amd64` ZIP member; it never extracts paths from the archive.
-5. Installs the binary atomically into a versioned directory.
+3. Verifies the platform-specific pinned SHA-256 before reading it.
+4. Reads only the exact platform binary member; it never extracts paths from the archive.
+5. Installs the binary atomically into a versioned directory; Linux/macOS switch an atomic `current` symlink, while Windows points its wrapper at the exact versioned executable.
 6. Generates random Basic Auth and webhook secrets on first setup and preserves them on rerun.
 7. Uses a kernel-selected free port on `127.0.0.1` and disables the downloaded web UI, media auto-download, and presence pulses.
-8. Creates runtime directories as `0700` and secret/database files under a `0077` service umask.
-9. Suppresses startup stdout because upstream prints all Viper settings, including secrets.
+8. Stores secrets outside process arguments: Linux uses a mode-`0600` environment file; macOS uses a private working-directory `.env`; Windows uses a `.env` under an `icacls` tree limited to the current user SID and `SYSTEM`. Hermes keeps the derived Authorization header in the active profile credential environment.
+9. Uses a `0077` supervisor umask on Linux/macOS and private runtime directories. SQLite remains unencrypted at rest.
+10. Suppresses startup stdout on every platform because upstream prints all Viper settings, including secrets.
+11. Restarts with the native user supervisor: systemd on failure, launchd on unsuccessful exit, and a one-minute Task Scheduler repetition watchdog with `IgnoreNew` on Windows.
 
 Existing-server `hermes gowa setup --base-url ...` downloads nothing and creates no service. It rejects redirects, validates URL/auth inputs, caps probe responses at 1 MiB, and requires `/app/info`, `/devices`, and MCP `initialize` to identify a working GOWA connection before changing Hermes configuration. A remote URL must use HTTPS and `--auth-bearer`.
+
+The macOS LaunchAgent and Windows `InteractiveToken` task deliberately run only while the user is logged in; boot-time/headless service requires an administrator-managed LaunchDaemon or Windows Service. Windows crash recovery can take up to one minute, and `schtasks /End` is forceful rather than a graceful POSIX signal. macOS stderr is not rotated; Windows overwrites its stderr log on each run.
 
 ## Known upstream hazards
 

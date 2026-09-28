@@ -6,16 +6,16 @@ A Hermes Agent plugin that connects an existing [GOWA](https://github.com/aldino
 
 ## What it provides
 
-- `hermes gowa setup`: installs and verifies **GOWA v9.5.0** on Linux x86_64, using a kernel-selected free loopback port.
+- `hermes gowa setup`: installs and verifies **GOWA v9.5.0** on Linux x86_64, macOS x86_64/arm64, or Windows x86_64, using a kernel-selected free loopback port.
 - `hermes gowa setup --base-url ...`: verifies and connects an existing GOWA without downloading or installing anything.
-- For local setup, a persistent user `systemd` service bound to `127.0.0.1` with generated Basic Auth.
+- For local setup, a persistent native user service bound to `127.0.0.1` with generated Basic Auth: `systemd --user`, a macOS LaunchAgent, or Windows Task Scheduler.
 - Native GOWA MCP tools for sending, messages, chats, groups, schedules, and session status.
 - Three Hermes tools for the REST gaps:
   - `gowa_devices` — list or inspect device slots.
   - `gowa_device_login` — create a slot if needed, then start QR or phone-code pairing.
   - `gowa_device_remove` — purge a device and request unlinking after explicit confirmation.
 
-The plugin does **not** supervise the daemon from Hermes' runtime. Hermes loads plugins in CLI, gateway, cron, and worker processes; tying a long-lived server to any one of them creates duplicate-process and orphan-cleanup problems. The one-shot setup command installs it, while `systemd` owns its lifetime.
+The plugin does **not** supervise the daemon from Hermes' runtime. Hermes loads plugins in CLI, gateway, cron, and worker processes; tying a long-lived server to any one of them creates duplicate-process and orphan-cleanup problems. The one-shot setup command installs it, while the operating system's native user supervisor owns its lifetime.
 
 ## Scope: outbound agent messaging
 
@@ -25,7 +25,7 @@ Webhook configuration is intentionally not implemented. Once inbound WhatsApp me
 
 ## Requirements
 
-- For local installation: Linux x86_64 with a working user `systemd` manager.
+- For local installation: Linux x86_64 with a user `systemd` manager; macOS x86_64/arm64 in a logged-in GUI session; or Windows 10/11 x86_64 in a logged-in interactive session.
 - Hermes Agent 0.21.5 or newer.
 - A WhatsApp account able to link another device.
 - Network access to WhatsApp; local installation also needs GitHub Releases access.
@@ -41,7 +41,7 @@ Setup is idempotent: rerunning it reinstalls the same verified release, preserve
 
 Setup adds `mcp_servers.gowa` to Hermes configuration, so reload MCP connections after it finishes. Run `/reload-mcp` in the current Hermes session, or restart the gateway from an external shell with `hermes gateway restart`. Then start a new Hermes session so its tool catalog includes both the native GOWA MCP tools and the plugin's device tools.
 
-The first local setup asks the kernel for an available ephemeral loopback port; it does not guess random ports or maintain a pool. The selected port is persisted in `~/.config/gowa/gowa.env` and reused on later runs. An explicit occupied `--port` fails before download. There is an unavoidable tiny bind/release/start race, so setup also verifies the service after startup and fails rather than silently connecting to the wrong process.
+The first local setup asks the kernel for an available ephemeral loopback port; it does not guess random ports or maintain a pool. The selected port is persisted in the platform's private GOWA environment file and reused on later runs. An explicit occupied `--port` fails before download. There is an unavoidable tiny bind/release/start race, so setup also verifies the authenticated `/app/info` response and exact pinned version after startup; it fails rather than silently connecting to the wrong process.
 
 To use another loopback port:
 
@@ -71,25 +71,75 @@ Remote URLs require HTTPS and a bearer token. The token is saved as `GOWA_AUTH_H
 
 ## What setup changes
 
-In existing-server mode, setup changes only the active Hermes profile: `GOWA_BASE_URL`, optional `GOWA_AUTH_HEADER`, `mcp_servers.gowa`, and `plugins.entries.gowa.settings.base_url`. It does not download GOWA, write systemd files, or manage that server's lifetime.
+In existing-server mode, setup changes only the active Hermes profile: `GOWA_BASE_URL`, optional `GOWA_AUTH_HEADER`, `mcp_servers.gowa`, and `plugins.entries.gowa.settings.base_url`. It does not download GOWA, write native service files, or manage that server's lifetime.
 
-In local-install mode, the installer downloads exactly:
+In local-install mode, the installer chooses one hard-coded release asset for the current supported platform and verifies its SHA-256 before reading the exact ZIP member:
 
-- Release: `v9.5.0`
-- Asset: `whatsapp_9.5.0_linux_amd64.zip`
-- SHA-256: `850a109a5127339adafeca3bd55be0bf5be5a5a3a0e7e2ffdd223536d312138c`
+- Linux x86_64: `whatsapp_9.5.0_linux_amd64.zip` / `linux-amd64` / `850a109a5127339adafeca3bd55be0bf5be5a5a3a0e7e2ffdd223536d312138c`
+- macOS x86_64: `whatsapp_9.5.0_darwin_amd64.zip` / `darwin-amd64` / `b57d6fa46bbef88fb3dd1708174d4e42cdcae7dea70250961a3f70f7c06e207b`
+- macOS arm64: `whatsapp_9.5.0_darwin_arm64.zip` / `darwin-arm64` / `0a5639e0608aaae3e1c7977a16303b782c2ea3ff7be8f73ecf0bed89adf7a444`
+- Windows x86_64: `whatsapp_9.5.0_windows_amd64.zip` / `windows-amd64.exe` / `611e66c5751657980b12a5a216af466f19548cba89e66b0b5a1c353e5a0ee825`
 
-It then creates:
+Linux and macOS use a versioned binary plus an atomic `current` symlink under `~/.local/lib/gowa/`. Windows writes the versioned executable under `%LOCALAPPDATA%\gowa\lib\v9.5.0\`; the scheduled-task wrapper names that exact path so updates never overwrite a running executable.
 
-- `~/.local/lib/gowa/v9.5.0/whatsapp` — versioned binary.
-- `~/.local/lib/gowa/current` — active-version symlink.
-- `~/.local/share/gowa/runtime/` — databases and runtime data, mode `0700`.
-- `~/.config/gowa/gowa.env` — service configuration and generated credentials, mode `0600`.
-- `~/.config/systemd/user/gowa.service` — persistent user service.
-- `GOWA_BASE_URL` and `GOWA_AUTH_HEADER` in the active Hermes profile's `.env`.
-- `mcp_servers.gowa` in the active Hermes profile configuration.
+Runtime and service files:
+
+- Linux: `~/.local/share/gowa/runtime/`, `~/.config/gowa/gowa.env`, and `~/.config/systemd/user/gowa.service`.
+- macOS: `~/.local/share/gowa/runtime/`, its private `.env`, and `~/Library/LaunchAgents/com.hermes.gowa.plist`.
+- Windows: `%LOCALAPPDATA%\gowa\runtime\`, its private `.env`, `%LOCALAPPDATA%\gowa\run.ps1`, and `%LOCALAPPDATA%\gowa\gowa-task.xml`.
+- Every platform stores `GOWA_BASE_URL` and `GOWA_AUTH_HEADER` in the active Hermes profile credential environment and references the latter as `${GOWA_AUTH_HEADER}` from MCP configuration.
 
 Security-sensitive defaults are changed: loopback-only binding, Basic Auth, UI disabled, UI auto-update disabled, incoming-media auto-download disabled, presence pulses disabled, a random webhook secret, and private SQLite files.
+
+### Native service implementation
+
+**Linux:** the existing `systemd --user` unit uses `Restart=on-failure`, `RestartSec=5`, `TimeoutStopSec=20`, `UMask=0077`, and systemd sandboxing. Setup runs `daemon-reload`, `enable`, `restart`, and `is-active`.
+
+**macOS:** setup writes this LaunchAgent with every `<HOME>` placeholder replaced by an absolute path; `launchd` does not expand `~` or shell variables:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.hermes.gowa</string>
+  <key>ProgramArguments</key><array>
+    <string>&lt;HOME&gt;/.local/lib/gowa/v9.5.0/whatsapp</string><string>rest</string>
+  </array>
+  <key>WorkingDirectory</key><string>&lt;HOME&gt;/.local/share/gowa/runtime</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ExitTimeOut</key><integer>20</integer>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>&lt;HOME&gt;/.local/share/gowa/runtime/logs/gowa.err.log</string>
+</dict></plist>
+```
+
+Setup uses modern domain-aware commands: `launchctl bootout gui/$UID/com.hermes.gowa` when loaded, waits for the old port to close, then runs `launchctl enable gui/$UID/com.hermes.gowa` and `launchctl bootstrap gui/$UID <absolute-plist>`. `RunAtLoad` starts it immediately; `KeepAlive.SuccessfulExit=false` matches systemd's restart-on-failure behavior. The `.env` remains in the private working directory, never in the plist or process arguments. Stdout is discarded because GOWA v9.5.0 prints all Viper settings, including secrets, at startup.
+
+**Windows:** there is no non-administrator equivalent of a boot-time Windows Service. Setup therefore creates the current user's `Hermes GOWA` Task Scheduler 2.0 task using UTF-16 XML and `schtasks.exe /Create /XML`. Its exact security/lifetime settings are:
+
+```xml
+<LogonTrigger><Enabled>true</Enabled><UserId>DOMAIN\User</UserId></LogonTrigger>
+<TimeTrigger>
+  <Enabled>true</Enabled><StartBoundary>INSTALL-TIME</StartBoundary>
+  <Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+</TimeTrigger>
+<Principal id="Author">
+  <UserId>DOMAIN\User</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>
+</Principal>
+<Settings>
+  <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+  <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+  <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+  <StartWhenAvailable>true</StartWhenAvailable>
+  <AllowStartOnDemand>true</AllowStartOnDemand>
+  <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+</Settings>
+```
+
+The task runs built-in Windows PowerShell hidden and non-interactively. A fixed `run.ps1` changes to the runtime directory, invokes the exact versioned `whatsapp.exe rest`, discards stdout, writes only the latest stderr log, waits for the child, and returns its exit code. No Basic credential appears in the task XML, script, or any command line. `InteractiveToken` deliberately avoids password storage and retains network access; Microsoft's passwordless `S4U` mode cannot access the network or encrypted files. The one-minute indefinite trigger is the crash watchdog—Task Scheduler does not reliably treat a successfully launched program's nonzero exit code as a restartable task failure—and `IgnoreNew` prevents duplicates while GOWA is alive. Setup ends the previous task, waits for its port to close, replaces the task, starts it with `schtasks.exe /Run`, and verifies authenticated readiness. `icacls` removes inherited access from the GOWA tree and grants full control only to the current user SID and `SYSTEM`.
 
 ## Architecture
 
@@ -108,8 +158,8 @@ Hermes session
        ├─ gowa_device_login
        └─ gowa_device_remove
 
-user systemd ───────────► owns and restarts a locally installed GOWA process
-                          (external GOWA remains externally managed)
+native user supervisor ──► owns and restarts a locally installed GOWA process
+                          (systemd, launchd, or Task Scheduler; external GOWA remains externally managed)
 ```
 
 This deliberately avoids duplicating the large MCP surface in Python.
@@ -168,37 +218,77 @@ Plain HTTP and unauthenticated connections are accepted only for loopback. Remot
 
 ## Verify
 
-```bash
-# Local-install mode only:
-systemctl --user is-active gowa.service
+Linux:
 
-# Both modes:
+```bash
+systemctl --user is-active gowa.service
+```
+
+macOS:
+
+```bash
+launchctl print "gui/$(id -u)/com.hermes.gowa"
+```
+
+Windows PowerShell:
+
+```powershell
+schtasks.exe /Query /TN "Hermes GOWA"
+```
+
+Every platform then uses the same application checks:
+
+```bash
 hermes mcp test gowa
 hermes plugins doctor ~/.hermes/plugins/gowa --ci
 hermes tools list
 ```
 
-Expected MCP discovery: six tools. Before account pairing, `gowa_devices` should succeed with an empty list.
+Expected MCP discovery: six tools. Before account pairing, `gowa_devices` should succeed with an empty list. Setup itself is stricter than supervisor status: it sends Basic Auth to `/app/info` and requires the response version to equal `v9.5.0`.
 
 ## Logs and troubleshooting
 
-```bash
-journalctl --user -u gowa.service -n 100 --no-pager
-```
+- Linux: `journalctl --user -u gowa.service -n 100 --no-pager`
+- macOS: `tail -n 100 ~/.local/share/gowa/runtime/logs/gowa.err.log`
+- Windows PowerShell: `Get-Content "$env:LOCALAPPDATA\gowa\runtime\logs\gowa.err.log" -Tail 100`
 
-GOWA v9.5.0 prints its complete Viper settings to stdout during startup. The service intentionally sends stdout to `/dev/null` so Basic Auth and webhook secrets do not enter the journal; normal application logs on stderr remain available.
+GOWA v9.5.0 prints its complete Viper settings to stdout during startup. Every native service intentionally discards stdout so Basic Auth and webhook secrets do not enter logs; stderr remains available through the platform-specific path above.
 
-Automatic local setup selects a currently free port. If an explicit `--port` is occupied, omit it to let the kernel choose or pass another port. For an existing server, an authentication error identifies whether REST or MCP rejected the bearer. If the local service starts but WhatsApp cannot connect, inspect the journal and confirm the host can reach WhatsApp without a proxy.
+Automatic local setup selects a currently free port. If an explicit `--port` is occupied, omit it to let the kernel choose or pass another port. For an existing server, an authentication error identifies whether REST or MCP rejected the bearer. If the local service starts but WhatsApp cannot connect, inspect stderr and confirm the host can reach WhatsApp without a proxy.
 
 ## Remove
 
-For a locally installed GOWA, first preserve the linked-device database unless you explicitly want to destroy it:
+First preserve the linked-device database unless you explicitly want to destroy it.
+
+Linux:
 
 ```bash
 systemctl --user disable --now gowa.service
 mv ~/.local/share/gowa/runtime ~/.local/share/gowa/runtime.backup
 rm ~/.config/systemd/user/gowa.service
 systemctl --user daemon-reload
+```
+
+macOS:
+
+```bash
+launchctl bootout "gui/$(id -u)/com.hermes.gowa"
+launchctl disable "gui/$(id -u)/com.hermes.gowa"
+mv ~/.local/share/gowa/runtime ~/.local/share/gowa/runtime.backup
+rm ~/Library/LaunchAgents/com.hermes.gowa.plist
+```
+
+Windows PowerShell:
+
+```powershell
+schtasks.exe /End /TN "Hermes GOWA"
+schtasks.exe /Delete /TN "Hermes GOWA" /F
+Move-Item "$env:LOCALAPPDATA\gowa\runtime" "$env:LOCALAPPDATA\gowa\runtime.backup"
+```
+
+Then remove the common Hermes configuration and plugin:
+
+```bash
 hermes config unset mcp_servers.gowa
 hermes config unset GOWA_BASE_URL
 hermes config unset GOWA_AUTH_HEADER
@@ -206,7 +296,7 @@ hermes config unset plugins.entries.gowa.settings.base_url
 hermes plugins remove gowa
 ```
 
-For an externally managed GOWA, skip the `systemctl`, runtime, binary, and service-environment steps; only unset the Hermes configuration and remove the plugin. Delete `runtime.backup` only after deciding that the WhatsApp session keys and local chat data are no longer needed. The versioned binary and service environment can then be removed from `~/.local/lib/gowa/` and `~/.config/gowa/`.
+For an externally managed GOWA, skip all supervisor, runtime, binary, and service-environment steps. Delete the runtime backup only after deciding that the WhatsApp session keys and local chat data are no longer needed.
 
 ## Security and limitations
 
@@ -216,6 +306,9 @@ Read [docs/SECURITY.md](docs/SECURITY.md) before linking an account.
 - Session databases are bearer credentials: filesystem access can become account access.
 - GOWA serves `/statics` before Basic Auth. Loopback-only binding contains that exposure to the host, and this plugin copies QR images into a private file rather than returning the public URL.
 - Basic Auth authorizes every configured device; `device_id` is routing, not tenant isolation.
+- macOS LaunchAgents exist only while that user's GUI login domain exists. A pre-login or headless daemon requires an administrator-installed LaunchDaemon and is intentionally out of scope.
+- The Windows task uses `InteractiveToken`, so it also runs only while the user is logged in. A real boot-time Windows Service requires administrator rights. Runtime recovery can take up to one minute, and Task Scheduler `/End` is a forced stop rather than GOWA's graceful POSIX `SIGTERM` path.
+- macOS stderr is not rotated; Windows keeps only the latest run's stderr. Add log rotation only if those logs become operationally noisy.
 - The installer is intentionally pinned. Upgrading GOWA requires reviewing a new release and updating the version, asset, checksum, tests, and documentation here.
 - Existing-server setup verifies identity and connectivity but does not pin or upgrade that external server.
 
