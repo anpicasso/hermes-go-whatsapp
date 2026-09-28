@@ -189,7 +189,7 @@ class PluginTests(unittest.TestCase):
         def unique_request(method: str, path: str, body=None, *, login: bool = False):
             calls.append((method, path, body))
             if method == "GET" and path == "/devices/work":
-                raise PLUGIN.GowaError("not found", 404)
+                raise PLUGIN.GowaError("GOWA returned HTTP 500: device work not found", 500)
             if method == "GET" and path == "/devices":
                 return {"results": [{"id": "personal", "phone_number": "+15550000000"}]}
             if method == "POST" and path == "/devices":
@@ -209,6 +209,69 @@ class PluginTests(unittest.TestCase):
             )
         self.assertEqual(result["results"]["pair_code"], "ABCD-EFGH")
         self.assertIn(("POST", "/devices", {"device_id": "work"}), calls)
+        self.assertTrue(
+            any(
+                method == "POST"
+                and path.startswith("/devices/work/login/code?phone=")
+                and "%2B" not in path
+                for method, path, _ in calls
+            )
+        )
+
+        with mock.patch.object(
+            PLUGIN,
+            "_request",
+            side_effect=PLUGIN.GowaError("GOWA returned HTTP 500: database unavailable", 500),
+        ):
+            with self.assertRaisesRegex(PLUGIN.GowaError, "database unavailable"):
+                PLUGIN._device_login(
+                    {
+                        "action": "qr",
+                        "device_id": "work",
+                        "create_if_missing": True,
+                    }
+                )
+
+    def test_code_login_checks_duplicates_for_existing_empty_slot(self) -> None:
+        calls: list[tuple[str, str, object]] = []
+
+        def request(method: str, path: str, body=None, *, login: bool = False):
+            calls.append((method, path, body))
+            if method == "GET" and path == "/devices/work":
+                return {"results": {"id": "work", "state": "disconnected"}}
+            if method == "GET" and path == "/devices":
+                return {"results": [{"id": "personal", "jid": "15551234567@s.whatsapp.net"}]}
+            self.fail(f"pairing should not start: {method} {path}")
+
+        with mock.patch.object(PLUGIN, "_request", side_effect=request):
+            with self.assertRaisesRegex(PLUGIN.GowaError, "already linked to device personal"):
+                PLUGIN._device_login(
+                    {"action": "code", "device_id": "work", "phone": "+15551234567"}
+                )
+        self.assertFalse(any(method == "POST" for method, _, _ in calls))
+
+    def test_code_login_rejects_jid_and_malformed_success(self) -> None:
+        with mock.patch.object(PLUGIN, "_request") as request:
+            with self.assertRaisesRegex(PLUGIN.GowaError, "phone must be"):
+                PLUGIN._device_login(
+                    {"action": "code", "device_id": "work", "phone": "15551234567@s.whatsapp.net"}
+                )
+            request.assert_not_called()
+
+        def malformed(method: str, path: str, body=None, *, login: bool = False):
+            if method == "GET" and path == "/devices/work":
+                return {"results": {"id": "work", "state": "disconnected"}}
+            if method == "GET" and path == "/devices":
+                return {"results": []}
+            if method == "POST" and path.startswith("/devices/work/login/code?"):
+                return {"results": None}
+            self.fail(f"unexpected request: {method} {path}")
+
+        with mock.patch.object(PLUGIN, "_request", side_effect=malformed):
+            with self.assertRaisesRegex(PLUGIN.GowaError, "did not include pair_code"):
+                PLUGIN._device_login(
+                    {"action": "code", "device_id": "work", "phone": "+15551234567"}
+                )
 
     def test_login_refuses_to_pair_an_already_linked_slot(self) -> None:
         def request(method: str, path: str, body=None, *, login: bool = False):

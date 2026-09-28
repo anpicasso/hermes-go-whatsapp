@@ -13,7 +13,7 @@ A Hermes Agent plugin that connects an existing [GOWA](https://github.com/aldino
 - Three Hermes tools for the REST gaps:
   - `gowa_devices` — list or inspect device slots.
   - `gowa_device_login` — create a slot if needed, then start QR or phone-code pairing.
-  - `gowa_device_remove` — permanently unlink and purge a device after explicit confirmation.
+  - `gowa_device_remove` — purge a device and request unlinking after explicit confirmation.
 
 The plugin does **not** supervise the daemon from Hermes' runtime. Hermes loads plugins in CLI, gateway, cron, and worker processes; tying a long-lived server to any one of them creates duplicate-process and orphan-cleanup problems. The one-shot setup command installs it, while `systemd` owns its lifetime.
 
@@ -122,7 +122,7 @@ In a new Hermes session, ask:
 
 The plugin creates the missing device slot, requests the QR, downloads it to a private plugin-data file, and returns that local path. Scan it from WhatsApp's **Linked devices** screen. QR images and phone pairing codes are temporary credentials—do not post them publicly or save them to memory.
 
-For phone-code pairing, provide an international number with 7–15 digits and an optional leading `+`. Before creating a slot, the plugin checks the registered devices' `phone_number` and WhatsApp JID and refuses when that number is already linked under another `device_id`. Invalid numbers are rejected before any slot is created. An existing slot that already has a session is not re-paired; use GOWA status/reconnect instead.
+For phone-code pairing, provide an international number with 7–15 digits and an optional leading `+`. Before pairing—whether the slot is new or already exists empty—the plugin checks the registered devices' `phone_number` and WhatsApp JID and refuses when that number is already linked under another `device_id`. Invalid numbers are rejected before any slot is created. An existing slot that already has a session is not re-paired; use GOWA status/reconnect instead.
 
 QR pairing cannot perform the same number check because the account is unknown until somebody scans the QR. It still refuses to start on a slot that already has a session. The phone preflight is best-effort rather than atomic: concurrent operators can race it, and GOWA remains the authority for the final pairing.
 
@@ -134,11 +134,11 @@ Read-only. Device responses can contain phone/account metadata.
 
 ### `gowa_device_login`
 
-Creates a device slot only when `create_if_missing: true`. Phone-code creation checks for the same account number in existing device metadata first; QR creation can only check the requested slot because the scanner's number is not known yet. Pairing outputs grant access to the linked WhatsApp session and must be shown only to the requesting user.
+Creates a device slot only when `create_if_missing: true`. Phone-code pairing checks for the same account number in existing device metadata first; QR creation can only check the requested slot because the scanner's number is not known yet. Pairing outputs grant access to the linked WhatsApp session and must be shown only to the requesting user.
 
 ### `gowa_device_remove`
 
-Requires an exact `device_id` and `confirm: true`. Removal unlinks the account and purges the device's stored session and chat data. There is no default-device fallback.
+Requires an exact `device_id` and `confirm: true`. Removal purges the locally stored session and chat data and asks WhatsApp to unlink the companion; upstream treats the remote unlink as best-effort, so the phone may still show a stale linked-device entry. There is no default-device fallback.
 
 ## Intentionally not exposed
 
@@ -149,7 +149,7 @@ The REST API is larger than the native MCP surface, but more tools are not autom
 - Chat history synchronization, participant exports, newsletters, or Chatwoot administration.
 - Profile/avatar/privacy mutations, presence simulation, or a generic arbitrary REST tool.
 
-Possible future additions, if a real workflow requires them, are standalone WhatsApp-number reachability checks and group-link inspection.
+The remaining read-only candidates were also reviewed and deliberately omitted. `/user/check` duplicates GOWA's default recipient validation on every send; `/group/info-from-link` serves pre-join browsing rather than outbound messaging; `/app/info` is already consumed by setup and service verification. Add one only if a concrete workflow appears.
 
 ## Configuration
 

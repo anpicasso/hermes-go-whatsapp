@@ -102,6 +102,13 @@ def _device_result(payload: Any) -> dict[str, Any]:
     return results
 
 
+def _missing_device(exc: GowaError, device_id: str) -> bool:
+    # GOWA v9.5.0 documents 404 but returns 500 for GET /devices/{missing}.
+    return exc.status == 404 or (
+        exc.status == 500 and str(exc) == f"GOWA returned HTTP 500: device {device_id} not found"
+    )
+
+
 def _find_device_by_phone(payload: Any, phone: str, exclude_id: str) -> str | None:
     results = payload.get("results") if isinstance(payload, dict) else None
     if results is None:
@@ -240,25 +247,42 @@ def _device_login(args: dict[str, Any]) -> Any:
     phone_digits = None
     if action == "code":
         phone = str(args.get("phone") or "")
-        phone_digits = _phone_digits(phone)
-        if phone != phone.strip() or phone_digits is None:
+        if phone != phone.strip() or not _PHONE.fullmatch(phone):
             raise GowaError("phone must be an international number with 7-15 digits and optional leading +")
+        phone_digits = phone.removeprefix("+")
 
+    missing = False
     try:
         existing = _device_result(_request("GET", f"/devices/{device_id}"))
     except GowaError as exc:
-        if exc.status != 404 or args.get("create_if_missing") is not True:
+        if not _missing_device(exc, raw_id) or args.get("create_if_missing") is not True:
             raise
-        if phone_digits is not None:
-            duplicate = _find_device_by_phone(_request("GET", "/devices"), phone_digits, raw_id)
-            if duplicate:
-                raise GowaError(f"phone {phone} is already linked to device {duplicate}; use that device_id instead")
-        _request("POST", "/devices", {"device_id": raw_id})
+        missing = True
     else:
         _ensure_unpaired(existing, raw_id)
 
+    if phone_digits is not None:
+        duplicate = _find_device_by_phone(_request("GET", "/devices"), phone_digits, raw_id)
+        if duplicate:
+            raise GowaError(f"phone {phone} is already linked to device {duplicate}; use that device_id instead")
+    if missing:
+        _request("POST", "/devices", {"device_id": raw_id})
+
     if action == "code":
-        return _request("POST", f"/devices/{device_id}/login/code?{urlencode({'phone': phone})}", login=True)
+        payload = _request(
+            "POST",
+            f"/devices/{device_id}/login/code?{urlencode({'phone': phone_digits})}",
+            login=True,
+        )
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if (
+            not isinstance(results, dict)
+            or not isinstance(results.get("pair_code"), str)
+            or not results["pair_code"]
+        ):
+            raise GowaError("GOWA login response did not include pair_code")
+        results["sensitive"] = "Use only in the intended WhatsApp account; do not share this pairing code."
+        return payload
 
     payload = _request("GET", f"/devices/{device_id}/login", login=True)
     results = payload.get("results") if isinstance(payload, dict) else None
@@ -295,7 +319,7 @@ DEVICES_SCHEMA = {
 
 LOGIN_SCHEMA = {
     "name": "gowa_device_login",
-    "description": "Begin user-requested WhatsApp pairing for a GOWA device slot. Refuses to re-pair an existing session; phone-code pairing also refuses to create a slot when that number is already linked elsewhere. QR/code outputs are temporary credentials: reveal them only to the requesting user and never save them to memory. Set create_if_missing only when provisioning a new slot.",
+    "description": "Begin user-requested WhatsApp pairing for a GOWA device slot. Refuses to re-pair an existing session or phone-code pair a number already linked elsewhere. QR/code outputs are temporary credentials: reveal them only to the requesting user and never save them to memory. Set create_if_missing only when provisioning a new slot.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -311,7 +335,7 @@ LOGIN_SCHEMA = {
 
 REMOVE_SCHEMA = {
     "name": "gowa_device_remove",
-    "description": "Permanently unlink and purge one exact GOWA device slot and its stored session/data. Call only after explicit user confirmation in the current conversation.",
+    "description": "Permanently purge one exact GOWA device slot and its stored session/data, and request WhatsApp unlinking. Call only after explicit user confirmation in the current conversation.",
     "parameters": {
         "type": "object",
         "properties": {
