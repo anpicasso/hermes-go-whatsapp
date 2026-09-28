@@ -16,6 +16,12 @@ A Hermes Agent plugin that installs a pinned local [GOWA](https://github.com/ald
 
 The plugin does **not** supervise the daemon from Hermes' runtime. Hermes loads plugins in CLI, gateway, cron, and worker processes; tying a long-lived server to any one of them creates duplicate-process and orphan-cleanup problems. The one-shot setup command installs it, while `systemd` owns its lifetime.
 
+## Scope: outbound agent messaging
+
+This plugin is deliberately an outbound-control integration: it lets an agent use the user's linked WhatsApp account to send messages to multiple recipients and manage the GOWA device slots needed for that work. It does **not** subscribe to or ingest the account's incoming message stream.
+
+Webhook configuration is intentionally not implemented. Once inbound WhatsApp messages should become Hermes conversations, use Hermes' built-in WhatsApp gateway instead; duplicating it through GOWA webhooks would add a second listener and an unnecessary prompt-injection surface outside this plugin's purpose.
+
 ## Requirements
 
 - Linux x86_64 with a working user `systemd` manager.
@@ -110,7 +116,7 @@ Requires an exact `device_id` and `confirm: true`. Removal unlinks the account a
 
 The REST API is larger than the native MCP surface, but more tools are not automatically better. This plugin does not expose:
 
-- Device webhook reads/writes, which can reveal secrets or exfiltrate messages.
+- Device webhook reads/writes or automatic webhook setup. Inbound WhatsApp conversations belong in Hermes' built-in WhatsApp gateway; this plugin is outbound-only.
 - Passkey/WebAuthn flows, which belong in an interactive browser.
 - Chat history synchronization, participant exports, newsletters, or Chatwoot administration.
 - Profile/avatar/privacy mutations, presence simulation, or a generic arbitrary REST tool.
