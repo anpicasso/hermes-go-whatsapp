@@ -39,6 +39,8 @@ hermes gowa setup
 
 Setup is idempotent: rerunning it reinstalls the same verified release, preserves existing generated credentials, updates configuration, and restarts the service.
 
+Setup adds `mcp_servers.gowa` to Hermes configuration, so reload MCP connections after it finishes. Run `/reload-mcp` in the current Hermes session, or restart the gateway from an external shell with `hermes gateway restart`. Then start a new Hermes session so its tool catalog includes both the native GOWA MCP tools and the plugin's device tools.
+
 The first local setup asks the kernel for an available ephemeral loopback port; it does not guess random ports or maintain a pool. The selected port is persisted in `~/.config/gowa/gowa.env` and reused on later runs. An explicit occupied `--port` fails before download. There is an unavoidable tiny bind/release/start race, so setup also verifies the service after startup and fails rather than silently connecting to the wrong process.
 
 To use another loopback port:
@@ -66,8 +68,6 @@ hermes gowa setup --base-url http://127.0.0.1:49152
 ```
 
 Remote URLs require HTTPS and a bearer token. The token is saved as `GOWA_AUTH_HEADER` in the active Hermes profile's credential environment, not in this repository or the plugin directory. Be aware that GOWA's built-in OAuth bearer handling protects `/mcp`; its global Basic Auth protects REST separately. Because this plugin needs both MCP and `/devices`, a single bearer must be accepted by both surfaces—typically through a reverse proxy—or REST must be unauthenticated on trusted loopback. Setup tests both and refuses a half-working connection.
-
-Start a new Hermes session after setup so its tool catalog includes the plugin and MCP tools.
 
 ## What setup changes
 
