@@ -84,6 +84,44 @@ def _device_id(value: Any) -> str:
     return device_id
 
 
+def _phone_digits(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if "@" in text:
+        user, server = text.rsplit("@", 1)
+        if server != "s.whatsapp.net":
+            return None
+        text = user.split(":", 1)[0]
+    candidate = text.removeprefix("+")
+    return candidate if _PHONE.fullmatch(candidate) else None
+
+
+def _device_result(payload: Any) -> dict[str, Any]:
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(results, dict):
+        raise GowaError("GOWA device response did not include a device record")
+    return results
+
+
+def _find_device_by_phone(payload: Any, phone: str, exclude_id: str) -> str | None:
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if results is None:
+        return None
+    if not isinstance(results, list):
+        raise GowaError("GOWA device list response was invalid")
+    for device in results:
+        if not isinstance(device, dict) or str(device.get("id") or "") == exclude_id:
+            continue
+        if phone in {_phone_digits(device.get("phone_number")), _phone_digits(device.get("jid"))}:
+            return str(device.get("id") or "unknown")
+    return None
+
+
+def _ensure_unpaired(device: dict[str, Any], device_id: str) -> None:
+    state = str(device.get("state") or "")
+    if device.get("jid") or device.get("phone_number") or state in {"connecting", "connected", "logged_in"}:
+        raise GowaError(f"device {device_id} is already linked or pairing; use status/reconnect instead")
+
+
 def _origin(url: str) -> tuple[str, str, int]:
     parsed = urlsplit(url)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -197,17 +235,29 @@ def _device_login(args: dict[str, Any]) -> Any:
         raise GowaError("action must be qr or code")
     raw_id = _device_id(args.get("device_id"))
     device_id = quote(raw_id, safe="")
+
+    phone = ""
+    phone_digits = None
+    if action == "code":
+        phone = str(args.get("phone") or "")
+        phone_digits = _phone_digits(phone)
+        if phone != phone.strip() or phone_digits is None:
+            raise GowaError("phone must be an international number with 7-15 digits and optional leading +")
+
     try:
-        _request("GET", f"/devices/{device_id}")
+        existing = _device_result(_request("GET", f"/devices/{device_id}"))
     except GowaError as exc:
         if exc.status != 404 or args.get("create_if_missing") is not True:
             raise
+        if phone_digits is not None:
+            duplicate = _find_device_by_phone(_request("GET", "/devices"), phone_digits, raw_id)
+            if duplicate:
+                raise GowaError(f"phone {phone} is already linked to device {duplicate}; use that device_id instead")
         _request("POST", "/devices", {"device_id": raw_id})
+    else:
+        _ensure_unpaired(existing, raw_id)
 
     if action == "code":
-        phone = str(args.get("phone") or "")
-        if not _PHONE.fullmatch(phone):
-            raise GowaError("phone must be an international number with 7-15 digits and optional leading +")
         return _request("POST", f"/devices/{device_id}/login/code?{urlencode({'phone': phone})}", login=True)
 
     payload = _request("GET", f"/devices/{device_id}/login", login=True)
@@ -245,7 +295,7 @@ DEVICES_SCHEMA = {
 
 LOGIN_SCHEMA = {
     "name": "gowa_device_login",
-    "description": "Begin user-requested WhatsApp pairing for a GOWA device slot. QR/code outputs are temporary credentials: reveal them only to the requesting user and never save them to memory. Set create_if_missing only when provisioning a new slot.",
+    "description": "Begin user-requested WhatsApp pairing for a GOWA device slot. Refuses to re-pair an existing session; phone-code pairing also refuses to create a slot when that number is already linked elsewhere. QR/code outputs are temporary credentials: reveal them only to the requesting user and never save them to memory. Set create_if_missing only when provisioning a new slot.",
     "parameters": {
         "type": "object",
         "properties": {

@@ -37,7 +37,7 @@ Existing-server `hermes gowa setup --base-url ...` downloads nothing and creates
 ## Tool policy
 
 - `gowa_devices` is read-only but may return personal metadata.
-- `gowa_device_login` is permitted only for an explicit user pairing request. It replaces the unauthenticated static QR URL with a private local file path.
+- `gowa_device_login` is permitted only for an explicit user pairing request. It validates phone-code input before creating a slot, rejects numbers already present in another device's metadata, and refuses to re-pair a slot that already has a session. QR pairing cannot deduplicate by number before the scan because the account is not known yet. The preflight is not an atomic server-side uniqueness constraint, so concurrent operators can still race it. The tool replaces the unauthenticated static QR URL with a private local file path.
 - `gowa_device_remove` requires an exact identifier and `confirm: true` after explicit approval.
 - There is no generic REST passthrough, webhook tool, passkey tool, profile mutation tool, or Chatwoot administration tool.
 

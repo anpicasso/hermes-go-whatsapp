@@ -137,6 +137,95 @@ class PluginTests(unittest.TestCase):
         )
         self.assertEqual(context.commands, ["gowa"])
 
+    def test_code_login_validates_before_creating_and_refuses_duplicate_number(self) -> None:
+        calls: list[tuple[str, str, object]] = []
+
+        def request(method: str, path: str, body=None, *, login: bool = False):
+            calls.append((method, path, body))
+            if method == "GET" and path == "/devices/new-slot":
+                raise PLUGIN.GowaError("not found", 404)
+            if method == "GET" and path == "/devices":
+                return {
+                    "results": [
+                        {
+                            "id": "personal",
+                            "phone_number": "",
+                            "jid": "15551234567@s.whatsapp.net",
+                            "state": "logged_in",
+                        }
+                    ]
+                }
+            if method == "POST" and path == "/devices":
+                self.fail("duplicate-number preflight must run before slot creation")
+            self.fail(f"unexpected request: {method} {path}")
+
+        with mock.patch.object(PLUGIN, "_request", side_effect=request):
+            with self.assertRaisesRegex(PLUGIN.GowaError, "already linked to device personal"):
+                PLUGIN._device_login(
+                    {
+                        "action": "code",
+                        "device_id": "new-slot",
+                        "phone": "+15551234567",
+                        "create_if_missing": True,
+                    }
+                )
+        self.assertNotIn(("POST", "/devices", {"device_id": "new-slot"}), calls)
+
+        calls.clear()
+        with mock.patch.object(PLUGIN, "_request", side_effect=request):
+            with self.assertRaisesRegex(PLUGIN.GowaError, "phone must be"):
+                PLUGIN._device_login(
+                    {
+                        "action": "code",
+                        "device_id": "new-slot",
+                        "phone": "not-a-number",
+                        "create_if_missing": True,
+                    }
+                )
+        self.assertEqual(calls, [])
+
+        calls.clear()
+
+        def unique_request(method: str, path: str, body=None, *, login: bool = False):
+            calls.append((method, path, body))
+            if method == "GET" and path == "/devices/work":
+                raise PLUGIN.GowaError("not found", 404)
+            if method == "GET" and path == "/devices":
+                return {"results": [{"id": "personal", "phone_number": "+15550000000"}]}
+            if method == "POST" and path == "/devices":
+                return {"results": {"id": "work"}}
+            if method == "POST" and path.startswith("/devices/work/login/code?"):
+                return {"results": {"device_id": "work", "pair_code": "ABCD-EFGH"}}
+            self.fail(f"unexpected request: {method} {path}")
+
+        with mock.patch.object(PLUGIN, "_request", side_effect=unique_request):
+            result = PLUGIN._device_login(
+                {
+                    "action": "code",
+                    "device_id": "work",
+                    "phone": "+15551234567",
+                    "create_if_missing": True,
+                }
+            )
+        self.assertEqual(result["results"]["pair_code"], "ABCD-EFGH")
+        self.assertIn(("POST", "/devices", {"device_id": "work"}), calls)
+
+    def test_login_refuses_to_pair_an_already_linked_slot(self) -> None:
+        def request(method: str, path: str, body=None, *, login: bool = False):
+            if method == "GET" and path == "/devices/personal":
+                return {
+                    "results": {
+                        "id": "personal",
+                        "jid": "15551234567@s.whatsapp.net",
+                        "state": "disconnected",
+                    }
+                }
+            self.fail(f"pairing should not start: {method} {path}")
+
+        with mock.patch.object(PLUGIN, "_request", side_effect=request):
+            with self.assertRaisesRegex(PLUGIN.GowaError, "already linked"):
+                PLUGIN._device_login({"action": "qr", "device_id": "personal"})
+
 
 class InstallerTests(unittest.TestCase):
     def test_verified_binary_install_is_atomic_and_versioned(self) -> None:

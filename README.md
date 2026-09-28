@@ -122,7 +122,9 @@ In a new Hermes session, ask:
 
 The plugin creates the missing device slot, requests the QR, downloads it to a private plugin-data file, and returns that local path. Scan it from WhatsApp's **Linked devices** screen. QR images and phone pairing codes are temporary credentials—do not post them publicly or save them to memory.
 
-For phone-code pairing, provide an international number with 7–15 digits and an optional leading `+`.
+For phone-code pairing, provide an international number with 7–15 digits and an optional leading `+`. Before creating a slot, the plugin checks the registered devices' `phone_number` and WhatsApp JID and refuses when that number is already linked under another `device_id`. Invalid numbers are rejected before any slot is created. An existing slot that already has a session is not re-paired; use GOWA status/reconnect instead.
+
+QR pairing cannot perform the same number check because the account is unknown until somebody scans the QR. It still refuses to start on a slot that already has a session. The phone preflight is best-effort rather than atomic: concurrent operators can race it, and GOWA remains the authority for the final pairing.
 
 ## Tool safety
 
@@ -132,7 +134,7 @@ Read-only. Device responses can contain phone/account metadata.
 
 ### `gowa_device_login`
 
-Creates a device slot only when `create_if_missing: true`. Pairing outputs grant access to the linked WhatsApp session and must be shown only to the requesting user.
+Creates a device slot only when `create_if_missing: true`. Phone-code creation checks for the same account number in existing device metadata first; QR creation can only check the requested slot because the scanner's number is not known yet. Pairing outputs grant access to the linked WhatsApp session and must be shown only to the requesting user.
 
 ### `gowa_device_remove`
 
@@ -147,7 +149,7 @@ The REST API is larger than the native MCP surface, but more tools are not autom
 - Chat history synchronization, participant exports, newsletters, or Chatwoot administration.
 - Profile/avatar/privacy mutations, presence simulation, or a generic arbitrary REST tool.
 
-Possible future additions, if a real workflow requires them, are read-only number validation and group-link inspection.
+Possible future additions, if a real workflow requires them, are standalone WhatsApp-number reachability checks and group-link inspection.
 
 ## Configuration
 
