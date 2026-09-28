@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/anpicasso/hermes-go-whatsapp/actions/workflows/ci.yml/badge.svg)](https://github.com/anpicasso/hermes-go-whatsapp/actions/workflows/ci.yml)
 
-A Hermes Agent plugin that installs a pinned local [GOWA](https://github.com/aldinokemal/go-whatsapp-web-multidevice) server, connects its native MCP endpoint, and adds the device-management operations that MCP does not expose.
+A Hermes Agent plugin that connects an existing [GOWA](https://github.com/aldinokemal/go-whatsapp-web-multidevice) server or installs a pinned local one, registers its native MCP endpoint, and adds the device-management operations that MCP does not expose.
 
 ## What it provides
 
-- `hermes gowa setup`: installs and verifies **GOWA v9.5.0** on Linux x86_64.
-- A persistent user `systemd` service bound to `127.0.0.1` with generated Basic Auth.
+- `hermes gowa setup`: installs and verifies **GOWA v9.5.0** on Linux x86_64, using a kernel-selected free loopback port.
+- `hermes gowa setup --base-url ...`: verifies and connects an existing GOWA without downloading or installing anything.
+- For local setup, a persistent user `systemd` service bound to `127.0.0.1` with generated Basic Auth.
 - Native GOWA MCP tools for sending, messages, chats, groups, schedules, and session status.
 - Three Hermes tools for the REST gaps:
   - `gowa_devices` — list or inspect device slots.
@@ -24,10 +25,10 @@ Webhook configuration is intentionally not implemented. Once inbound WhatsApp me
 
 ## Requirements
 
-- Linux x86_64 with a working user `systemd` manager.
+- For local installation: Linux x86_64 with a working user `systemd` manager.
 - Hermes Agent 0.21.5 or newer.
 - A WhatsApp account able to link another device.
-- Network access to GitHub Releases and WhatsApp.
+- Network access to WhatsApp; local installation also needs GitHub Releases access.
 
 ## Install
 
@@ -38,17 +39,41 @@ hermes gowa setup
 
 Setup is idempotent: rerunning it reinstalls the same verified release, preserves existing generated credentials, updates configuration, and restarts the service.
 
+The first local setup asks the kernel for an available ephemeral loopback port; it does not guess random ports or maintain a pool. The selected port is persisted in `~/.config/gowa/gowa.env` and reused on later runs. An explicit occupied `--port` fails before download. There is an unavoidable tiny bind/release/start race, so setup also verifies the service after startup and fails rather than silently connecting to the wrong process.
+
 To use another loopback port:
 
 ```bash
 hermes gowa setup --port 3456
 ```
 
+### Connect an existing GOWA
+
+To connect a GOWA that is already running, without downloading a binary or creating a service:
+
+```bash
+hermes gowa setup \
+  --base-url https://gowa.example.com \
+  --auth-bearer "$GOWA_TOKEN"
+```
+
+Setup probes `GET /app/info`, `GET /devices`, and the MCP `initialize` method on `POST /mcp` **before** changing Hermes configuration. A missing or rejected bearer token is an error, as is a non-GOWA response. `--auth-bearer` without `--base-url`, and `--port` together with `--base-url`, are rejected.
+
+An unauthenticated existing server is supported only on loopback:
+
+```bash
+hermes gowa setup --base-url http://127.0.0.1:49152
+```
+
+Remote URLs require HTTPS and a bearer token. The token is saved as `GOWA_AUTH_HEADER` in the active Hermes profile's credential environment, not in this repository or the plugin directory. Be aware that GOWA's built-in OAuth bearer handling protects `/mcp`; its global Basic Auth protects REST separately. Because this plugin needs both MCP and `/devices`, a single bearer must be accepted by both surfaces—typically through a reverse proxy—or REST must be unauthenticated on trusted loopback. Setup tests both and refuses a half-working connection.
+
 Start a new Hermes session after setup so its tool catalog includes the plugin and MCP tools.
 
 ## What setup changes
 
-The installer downloads exactly:
+In existing-server mode, setup changes only the active Hermes profile: `GOWA_BASE_URL`, optional `GOWA_AUTH_HEADER`, `mcp_servers.gowa`, and `plugins.entries.gowa.settings.base_url`. It does not download GOWA, write systemd files, or manage that server's lifetime.
+
+In local-install mode, the installer downloads exactly:
 
 - Release: `v9.5.0`
 - Asset: `whatsapp_9.5.0_linux_amd64.zip`
@@ -83,7 +108,8 @@ Hermes session
        ├─ gowa_device_login
        └─ gowa_device_remove
 
-user systemd ───────────► owns and restarts the GOWA process
+user systemd ───────────► owns and restarts a locally installed GOWA process
+                          (external GOWA remains externally managed)
 ```
 
 This deliberately avoids duplicating the large MCP surface in Python.
@@ -132,16 +158,19 @@ plugins:
   entries:
     gowa:
       settings:
-        base_url: http://127.0.0.1:3000
+        base_url: http://127.0.0.1:49152  # setup writes the selected or external URL
         timeout_seconds: 15
 ```
 
-Plain HTTP is accepted only for loopback. Remote servers must use HTTPS. Authentication is read through Hermes' profile-aware credential chain from `GOWA_AUTH_HEADER`; it is never stored inside the plugin directory.
+Plain HTTP and unauthenticated connections are accepted only for loopback. Remote servers must use HTTPS plus Bearer Auth. Authentication is read through Hermes' profile-aware credential chain from `GOWA_AUTH_HEADER`; it is never stored inside the plugin directory. When no auth is needed, setup removes stale GOWA Authorization configuration instead of sending an empty header.
 
 ## Verify
 
 ```bash
+# Local-install mode only:
 systemctl --user is-active gowa.service
+
+# Both modes:
 hermes mcp test gowa
 hermes plugins doctor ~/.hermes/plugins/gowa --ci
 hermes tools list
@@ -157,11 +186,11 @@ journalctl --user -u gowa.service -n 100 --no-pager
 
 GOWA v9.5.0 prints its complete Viper settings to stdout during startup. The service intentionally sends stdout to `/dev/null` so Basic Auth and webhook secrets do not enter the journal; normal application logs on stderr remain available.
 
-If setup reports an occupied port, rerun it with a free `--port`. If the service starts but WhatsApp cannot connect, inspect the journal and confirm the host can reach WhatsApp without a proxy.
+Automatic local setup selects a currently free port. If an explicit `--port` is occupied, omit it to let the kernel choose or pass another port. For an existing server, an authentication error identifies whether REST or MCP rejected the bearer. If the local service starts but WhatsApp cannot connect, inspect the journal and confirm the host can reach WhatsApp without a proxy.
 
 ## Remove
 
-First preserve the linked-device database unless you explicitly want to destroy it:
+For a locally installed GOWA, first preserve the linked-device database unless you explicitly want to destroy it:
 
 ```bash
 systemctl --user disable --now gowa.service
@@ -175,7 +204,7 @@ hermes config unset plugins.entries.gowa.settings.base_url
 hermes plugins remove gowa
 ```
 
-Delete `runtime.backup` only after deciding that the WhatsApp session keys and local chat data are no longer needed. The versioned binary and service environment can then be removed from `~/.local/lib/gowa/` and `~/.config/gowa/`.
+For an externally managed GOWA, skip the `systemctl`, runtime, binary, and service-environment steps; only unset the Hermes configuration and remove the plugin. Delete `runtime.backup` only after deciding that the WhatsApp session keys and local chat data are no longer needed. The versioned binary and service environment can then be removed from `~/.local/lib/gowa/` and `~/.config/gowa/`.
 
 ## Security and limitations
 
@@ -186,6 +215,7 @@ Read [docs/SECURITY.md](docs/SECURITY.md) before linking an account.
 - GOWA serves `/statics` before Basic Auth. Loopback-only binding contains that exposure to the host, and this plugin copies QR images into a private file rather than returning the public URL.
 - Basic Auth authorizes every configured device; `device_id` is routing, not tenant isolation.
 - The installer is intentionally pinned. Upgrading GOWA requires reviewing a new release and updating the version, asset, checksum, tests, and documentation here.
+- Existing-server setup verifies identity and connectivity but does not pin or upgrade that external server.
 
 ## License
 

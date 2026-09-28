@@ -62,12 +62,14 @@ def _timeout(login: bool = False) -> float:
     return value
 
 
-def _auth_header() -> str:
+def _auth_header() -> str | None:
     from hermes_cli.config import get_env_value_prefer_dotenv
 
     value = (get_env_value_prefer_dotenv("GOWA_AUTH_HEADER") or "").strip()
-    if not value or "\n" in value or "\r" in value:
-        raise GowaError("GOWA_AUTH_HEADER is missing or invalid")
+    if not value:
+        return None
+    if "\n" in value or "\r" in value:
+        raise GowaError("GOWA_AUTH_HEADER is invalid")
     if not value.startswith(("Basic ", "Bearer ")):
         raise GowaError("GOWA_AUTH_HEADER must be a complete Basic or Bearer Authorization value")
     return value
@@ -112,15 +114,15 @@ def _read(req: Request, timeout: float, limit: int) -> bytes:
 
 def _request(method: str, path: str, body: dict[str, Any] | None = None, *, login: bool = False) -> Any:
     data = None if body is None else json.dumps(body).encode("utf-8")
+    headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if data is not None else {})}
+    auth_header = _auth_header()
+    if auth_header:
+        headers["Authorization"] = auth_header
     req = Request(
         _base_url() + "/" + path.lstrip("/"),
         data=data,
         method=method,
-        headers={
-            "Accept": "application/json",
-            "Authorization": _auth_header(),
-            **({"Content-Type": "application/json"} if data is not None else {}),
-        },
+        headers=headers,
     )
     raw = _read(req, _timeout(login), _MAX_JSON)
     if not raw:
@@ -135,7 +137,11 @@ def _download_qr(url: str) -> str:
     base = _base_url()
     if _origin(url) != _origin(base):
         raise GowaError("GOWA returned a QR URL on a different origin")
-    req = Request(url, method="GET", headers={"Authorization": _auth_header()})
+    headers = {}
+    auth_header = _auth_header()
+    if auth_header:
+        headers["Authorization"] = auth_header
+    req = Request(url, method="GET", headers=headers)
     png = _read(req, _timeout(), _MAX_QR)
     if not png.startswith(b"\x89PNG\r\n\x1a\n"):
         raise GowaError("GOWA QR response was not a PNG")
@@ -281,10 +287,10 @@ def register(ctx: Any) -> None:
 
     ctx.register_cli_command(
         name="gowa",
-        help="Install and configure the pinned local GOWA server",
+        help="Install pinned GOWA locally or connect an existing server",
         setup_fn=installer.register_cli,
         handler_fn=installer.cli_handler,
-        description="Install GOWA v9.5.0, configure its user service, MCP endpoint, and device tools.",
+        description="Configure GOWA REST/MCP and device tools; optionally install v9.5.0 as a user service.",
     )
 
 
@@ -340,6 +346,7 @@ def _demo() -> None:
             return self.send_json({"message": "not found"}, 404)
 
     old_ctx = globals()["_CTX"]
+    old_auth_header = globals()["_auth_header"]
     with tempfile.TemporaryDirectory() as tmp:
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -352,6 +359,7 @@ def _demo() -> None:
                 return f"http://127.0.0.1:{server.server_port}" if key == "base_url" else default
 
         globals()["_CTX"] = FakeCtx()
+        globals()["_auth_header"] = lambda: None
         try:
             login = json.loads(_safe(_device_login)({"action": "qr", "device_id": "demo", "create_if_missing": True}))
             assert login["ok"] and Path(login["data"]["results"]["qr_path"]).is_file(), login
@@ -363,6 +371,7 @@ def _demo() -> None:
             server.shutdown()
             server.server_close()
             globals()["_CTX"] = old_ctx
+            globals()["_auth_header"] = old_auth_header
     print("gowa plugin self-check OK")
 
 

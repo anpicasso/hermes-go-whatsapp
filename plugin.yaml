@@ -1,9 +1,9 @@
 name: gowa
-version: 0.2.0
+version: 0.3.0
 kind: standalone
 manifest_version: 2
 requires_hermes: ">=0.21.5"
-description: Pinned GOWA installer plus the REST device-management tools missing from its native MCP server.
+description: Connect existing GOWA or install a pinned local service, plus the REST device tools missing from MCP.
 author: anpicasso
 license: MIT
 homepage: https://github.com/anpicasso/hermes-go-whatsapp
