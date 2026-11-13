@@ -14,7 +14,7 @@ This plugin connects to a GOWA process that holds WhatsApp linked-device keys. I
 
 Local `hermes gowa setup`:
 
-1. Selects one hard-coded GOWA v9.5.0 release asset for Linux x86_64, macOS x86_64/arm64, or Windows x86_64 and downloads it over HTTPS.
+1. Selects one hard-coded GOWA v9.9.0 release asset for Linux x86_64, macOS x86_64/arm64, or Windows x86_64 and downloads it over HTTPS.
 2. Rejects archives larger than 64 MiB.
 3. Verifies the platform-specific pinned SHA-256 before reading it.
 4. Reads only the exact platform binary member; it never extracts paths from the archive.
@@ -23,7 +23,7 @@ Local `hermes gowa setup`:
 7. Uses a kernel-selected free port on `127.0.0.1` and disables the downloaded web UI, media auto-download, and presence pulses.
 8. Stores secrets outside process arguments: Linux uses a mode-`0600` environment file; macOS uses a private working-directory `.env`; Windows uses a `.env` under an `icacls` tree limited to the current user SID and `SYSTEM`. Hermes keeps the derived Authorization header in the active profile credential environment.
 9. Uses a `0077` supervisor umask on Linux/macOS and private runtime directories. SQLite remains unencrypted at rest.
-10. Suppresses startup stdout on every platform because upstream prints all Viper settings, including secrets.
+10. Suppresses startup stdout on every platform as defense in depth; GOWA v9.9.0 also redacts sensitive settings.
 11. Restarts with the native user supervisor: systemd on failure, launchd on unsuccessful exit, and a one-minute Task Scheduler repetition watchdog with `IgnoreNew` on Windows.
 
 Existing-server `hermes gowa setup --base-url ...` downloads nothing and creates no service. It rejects redirects, validates URL/auth inputs, caps probe responses at 1 MiB, and requires `/app/info`, `/devices`, and MCP `initialize` to identify a working GOWA connection before changing Hermes configuration. A remote URL must use HTTPS and `--auth-bearer`.
@@ -32,7 +32,7 @@ The macOS LaunchAgent and Windows `InteractiveToken` task deliberately run only 
 
 ## Known upstream hazards
 
-- `/statics` is mounted before global Basic Auth. Do not expose a GOWA port beyond loopback without an authenticated reverse proxy that also protects static paths.
+- GOWA v9.9.0 restricts stored-file paths and delivery types; the static routes are still mounted before global Basic Auth. Keep the service on loopback, or protect static paths at an authenticated reverse proxy.
 - GOWA has no per-device authorization scopes. Any valid server credential can operate on every device in that instance.
 - Device webhook configuration can forward message events to arbitrary URLs and its read endpoint returns the webhook secret. This plugin exposes neither operation.
 - The REST/MCP API includes destructive actions such as logout, message deletion, group changes, and device purge. Hermes tool descriptions and confirmation gates reduce accidental use but are not a sandbox.

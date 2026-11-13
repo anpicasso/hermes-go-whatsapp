@@ -29,30 +29,30 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 
-GOWA_VERSION = "v9.5.0"
+GOWA_VERSION = "v9.9.0"
 _RELEASE_BASE = (
     "https://github.com/aldinokemal/go-whatsapp-web-multidevice/"
     f"releases/download/{GOWA_VERSION}"
 )
 _RELEASES = {
     ("Linux", "x86_64"): (
-        "whatsapp_9.5.0_linux_amd64.zip",
-        "850a109a5127339adafeca3bd55be0bf5be5a5a3a0e7e2ffdd223536d312138c",
+        "whatsapp_9.9.0_linux_amd64.zip",
+        "b3a0afc3cd2721198de60032a21f7f0aa78e58d0a478a7b00566d1604b7aa574",
         "linux-amd64",
     ),
     ("Darwin", "x86_64"): (
-        "whatsapp_9.5.0_darwin_amd64.zip",
-        "b57d6fa46bbef88fb3dd1708174d4e42cdcae7dea70250961a3f70f7c06e207b",
+        "whatsapp_9.9.0_darwin_amd64.zip",
+        "ead32e63f9338019f315d6e70159b44154bc6fc75637faa2c4deae2b90e38398",
         "darwin-amd64",
     ),
     ("Darwin", "arm64"): (
-        "whatsapp_9.5.0_darwin_arm64.zip",
-        "0a5639e0608aaae3e1c7977a16303b782c2ea3ff7be8f73ecf0bed89adf7a444",
+        "whatsapp_9.9.0_darwin_arm64.zip",
+        "ac1d77adb15a31de558b8dca7871d0fbc7d05fdaab82ed49d9de357cdfe0e1b6",
         "darwin-arm64",
     ),
     ("Windows", "amd64"): (
-        "whatsapp_9.5.0_windows_amd64.zip",
-        "611e66c5751657980b12a5a216af466f19548cba89e66b0b5a1c353e5a0ee825",
+        "whatsapp_9.9.0_windows_amd64.zip",
+        "51fa01ee9379cb8201c4ae07d54fca1b05aee0770a20de91773255dbd3913b69",
         "windows-amd64.exe",
     ),
 }
@@ -291,7 +291,7 @@ def _verify_existing(base_url: str, auth_header: str | None) -> str:
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "hermes-go-whatsapp-setup", "version": "0.4.1"},
+                "clientInfo": {"name": "hermes-go-whatsapp-setup", "version": "0.5.0"},
             },
         }
     ).encode("utf-8")

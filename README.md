@@ -6,10 +6,10 @@ A Hermes Agent `go-whatsapp` plugin that connects an existing [GOWA](https://git
 
 ## What it provides
 
-- `hermes gowa setup`: installs and verifies **GOWA v9.5.0** on Linux x86_64, macOS x86_64/arm64, or Windows x86_64, using a kernel-selected free loopback port.
+- `hermes gowa setup`: installs and verifies **GOWA v9.9.0** on Linux x86_64, macOS x86_64/arm64, or Windows x86_64, using a kernel-selected free loopback port.
 - `hermes gowa setup --base-url ...`: verifies and connects an existing GOWA without downloading or installing anything.
 - For local setup, a persistent native user service bound to `127.0.0.1` with generated Basic Auth: `systemd --user`, a macOS LaunchAgent, or Windows Task Scheduler.
-- Native GOWA MCP tools for sending, messages, chats, groups, schedules, and session status.
+- Native GOWA MCP tools for sending, messages, chats, groups, schedules, session status, and newsletters.
 - Three Hermes tools for the REST gaps:
   - `gowa_devices` — list or inspect device slots.
   - `gowa_device_login` — create a slot if needed, then start QR or phone-code pairing.
@@ -80,18 +80,24 @@ hermes gowa setup --base-url http://127.0.0.1:49152
 
 Remote URLs require HTTPS and a bearer token. The token is saved as `GOWA_AUTH_HEADER` in the active Hermes profile's credential environment, not in this repository or the plugin directory. Be aware that GOWA's built-in OAuth bearer handling protects `/mcp`; its global Basic Auth protects REST separately. Because this plugin needs both MCP and `/devices`, a single bearer must be accepted by both surfaces—typically through a reverse proxy—or REST must be unauthenticated on trusted loopback. Setup tests both and refuses a half-working connection.
 
+## Upgrading to GOWA v9.9.0
+
+Back up the runtime directory and service environment before running setup. Existing local credentials and the selected loopback port are preserved.
+
+GOWA v9.8+ rejects private-address media and link-preview URL fetches. A temporary localhost file server is no longer a supported attachment source; use a reachable public HTTPS URL or the upstream authenticated multipart REST upload path. Do not disable the upstream URL guard. The native MCP catalog now includes `whatsapp_newsletter` (seven tools total). See the [upstream upgrade notes](https://github.com/aldinokemal/go-whatsapp-web-multidevice/releases/tag/v9.8.0) for remote authentication, trusted browser origins, and TLS changes.
+
 ## What setup changes
 
 In existing-server mode, setup changes only the active Hermes profile: `GOWA_BASE_URL`, optional `GOWA_AUTH_HEADER`, `mcp_servers.gowa`, and `plugins.entries.go-whatsapp.settings.base_url`. It does not download GOWA, write native service files, or manage that server's lifetime.
 
 In local-install mode, the installer chooses one hard-coded release asset for the current supported platform and verifies its SHA-256 before reading the exact ZIP member:
 
-- Linux x86_64: `whatsapp_9.5.0_linux_amd64.zip` / `linux-amd64` / `850a109a5127339adafeca3bd55be0bf5be5a5a3a0e7e2ffdd223536d312138c`
-- macOS x86_64: `whatsapp_9.5.0_darwin_amd64.zip` / `darwin-amd64` / `b57d6fa46bbef88fb3dd1708174d4e42cdcae7dea70250961a3f70f7c06e207b`
-- macOS arm64: `whatsapp_9.5.0_darwin_arm64.zip` / `darwin-arm64` / `0a5639e0608aaae3e1c7977a16303b782c2ea3ff7be8f73ecf0bed89adf7a444`
-- Windows x86_64: `whatsapp_9.5.0_windows_amd64.zip` / `windows-amd64.exe` / `611e66c5751657980b12a5a216af466f19548cba89e66b0b5a1c353e5a0ee825`
+- Linux x86_64: `whatsapp_9.9.0_linux_amd64.zip` / `linux-amd64` / `b3a0afc3cd2721198de60032a21f7f0aa78e58d0a478a7b00566d1604b7aa574`
+- macOS x86_64: `whatsapp_9.9.0_darwin_amd64.zip` / `darwin-amd64` / `ead32e63f9338019f315d6e70159b44154bc6fc75637faa2c4deae2b90e38398`
+- macOS arm64: `whatsapp_9.9.0_darwin_arm64.zip` / `darwin-arm64` / `ac1d77adb15a31de558b8dca7871d0fbc7d05fdaab82ed49d9de357cdfe0e1b6`
+- Windows x86_64: `whatsapp_9.9.0_windows_amd64.zip` / `windows-amd64.exe` / `51fa01ee9379cb8201c4ae07d54fca1b05aee0770a20de91773255dbd3913b69`
 
-Linux and macOS use a versioned binary plus an atomic `current` symlink under `~/.local/lib/gowa/`. Windows writes the versioned executable under `%LOCALAPPDATA%\gowa\lib\v9.5.0\`; the scheduled-task wrapper names that exact path so updates never overwrite a running executable.
+Linux and macOS use a versioned binary plus an atomic `current` symlink under `~/.local/lib/gowa/`. Windows writes the versioned executable under `%LOCALAPPDATA%\gowa\lib\v9.9.0\`; the scheduled-task wrapper names that exact path so updates never overwrite a running executable.
 
 Runtime and service files:
 
@@ -114,7 +120,7 @@ Security-sensitive defaults are changed: loopback-only binding, Basic Auth, UI d
 <plist version="1.0"><dict>
   <key>Label</key><string>com.hermes.gowa</string>
   <key>ProgramArguments</key><array>
-    <string>&lt;HOME&gt;/.local/lib/gowa/v9.5.0/whatsapp</string><string>rest</string>
+    <string>&lt;HOME&gt;/.local/lib/gowa/v9.9.0/whatsapp</string><string>rest</string>
   </array>
   <key>WorkingDirectory</key><string>&lt;HOME&gt;/.local/share/gowa/runtime</string>
   <key>RunAtLoad</key><true/>
@@ -127,7 +133,7 @@ Security-sensitive defaults are changed: loopback-only binding, Basic Auth, UI d
 </dict></plist>
 ```
 
-Setup uses modern domain-aware commands: `launchctl bootout gui/$UID/com.hermes.gowa` when loaded, waits for the old port to close, then runs `launchctl enable gui/$UID/com.hermes.gowa` and `launchctl bootstrap gui/$UID <absolute-plist>`. `RunAtLoad` starts it immediately; `KeepAlive.SuccessfulExit=false` matches systemd's restart-on-failure behavior. The `.env` remains in the private working directory, never in the plist or process arguments. Stdout is discarded because GOWA v9.5.0 prints all Viper settings, including secrets, at startup.
+Setup uses modern domain-aware commands: `launchctl bootout gui/$UID/com.hermes.gowa` when loaded, waits for the old port to close, then runs `launchctl enable gui/$UID/com.hermes.gowa` and `launchctl bootstrap gui/$UID <absolute-plist>`. `RunAtLoad` starts it immediately; `KeepAlive.SuccessfulExit=false` matches systemd's restart-on-failure behavior. The `.env` remains in the private working directory, never in the plist or process arguments. Stdout remains discarded as defense in depth; GOWA v9.9.0 also redacts secrets from its startup settings dump.
 
 **Windows:** there is no non-administrator equivalent of a boot-time Windows Service. Setup therefore creates the current user's `Hermes GOWA` Task Scheduler 2.0 task using UTF-16 XML and `schtasks.exe /Create /XML`. Its exact security/lifetime settings are:
 
@@ -162,7 +168,8 @@ Hermes session
   │    ├─ whatsapp_chat
   │    ├─ whatsapp_group
   │    ├─ whatsapp_schedule
-  │    └─ whatsapp_app
+  │    ├─ whatsapp_app
+  │    └─ whatsapp_newsletter
   │
   └─ go-whatsapp plugin ─► GOWA REST
        ├─ gowa_devices
@@ -207,7 +214,7 @@ The REST API is larger than the native MCP surface, but more tools are not autom
 
 - Device webhook reads/writes or automatic webhook setup. Inbound WhatsApp conversations belong in Hermes' built-in WhatsApp gateway; this plugin is outbound-only.
 - Passkey/WebAuthn flows, which belong in an interactive browser.
-- Chat history synchronization, participant exports, newsletters, or Chatwoot administration.
+- Extra REST wrappers for chat history synchronization, participant exports, newsletters, or Chatwoot administration. GOWA v9.9.0 itself exposes newsletter operations through native MCP.
 - Profile/avatar/privacy mutations, presence simulation, or a generic arbitrary REST tool.
 
 The remaining read-only candidates were also reviewed and deliberately omitted. `/user/check` duplicates GOWA's default recipient validation on every send; `/group/info-from-link` serves pre-join browsing rather than outbound messaging; `/app/info` is already consumed by setup and service verification. Add one only if a concrete workflow appears.
@@ -255,7 +262,7 @@ hermes plugins doctor ~/.hermes/plugins/go-whatsapp --ci
 hermes tools list
 ```
 
-Expected MCP discovery: six tools. Before account pairing, `gowa_devices` should succeed with an empty list. Setup itself is stricter than supervisor status: it sends Basic Auth to `/app/info` and requires the response version to equal `v9.5.0`.
+Expected MCP discovery: seven tools. Before account pairing, `gowa_devices` should succeed with an empty list. Setup itself is stricter than supervisor status: it sends Basic Auth to `/app/info` and requires the response version to equal `v9.9.0`.
 
 ## Logs and troubleshooting
 
@@ -263,7 +270,7 @@ Expected MCP discovery: six tools. Before account pairing, `gowa_devices` should
 - macOS: `tail -n 100 ~/.local/share/gowa/runtime/logs/gowa.err.log`
 - Windows PowerShell: `Get-Content "$env:LOCALAPPDATA\gowa\runtime\logs\gowa.err.log" -Tail 100`
 
-GOWA v9.5.0 prints its complete Viper settings to stdout during startup. Every native service intentionally discards stdout so Basic Auth and webhook secrets do not enter logs; stderr remains available through the platform-specific path above.
+GOWA v9.9.0 redacts sensitive values in its startup settings dump. Every native service still discards stdout as defense in depth; stderr remains available through the platform-specific path above.
 
 Automatic local setup selects a currently free port. If an explicit `--port` is occupied, omit it to let the kernel choose or pass another port. For an existing server, an authentication error identifies whether REST or MCP rejected the bearer. If the local service starts but WhatsApp cannot connect, inspect stderr and confirm the host can reach WhatsApp without a proxy.
 

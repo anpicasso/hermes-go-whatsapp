@@ -1,5 +1,5 @@
 name: go-whatsapp
-version: 0.4.1
+version: 0.5.0
 kind: standalone
 manifest_version: 2
 requires_hermes: ">=0.21.5"

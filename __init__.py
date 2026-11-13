@@ -63,9 +63,9 @@ def _timeout(login: bool = False) -> float:
 
 
 def _auth_header() -> str | None:
-    from hermes_cli.config import get_env_value_prefer_dotenv
+    from agent.secret_scope import get_secret
 
-    value = (get_env_value_prefer_dotenv("GOWA_AUTH_HEADER") or "").strip()
+    value = (get_secret("GOWA_AUTH_HEADER") or "").strip()
     if not value:
         return None
     if "\n" in value or "\r" in value:
@@ -364,7 +364,7 @@ def register(ctx: Any) -> None:
         help="Install pinned GOWA locally or connect an existing server",
         setup_fn=installer.register_cli,
         handler_fn=installer.cli_handler,
-        description="Configure GOWA REST/MCP and device tools; optionally install v9.5.0 as a user service.",
+        description=f"Configure GOWA REST/MCP and device tools; optionally install {installer.GOWA_VERSION} as a user service.",
     )
 
 

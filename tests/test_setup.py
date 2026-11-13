@@ -49,7 +49,7 @@ def existing_gowa(
     info_results=None,
     server_name: str = "WhatsApp Web Multidevice MCP Server",
 ):
-    info_results = {"version": "v9.5.0"} if info_results is None else info_results
+    info_results = {"version": "v9.9.0"} if info_results is None else info_results
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args) -> None:
@@ -100,7 +100,7 @@ def existing_gowa(
                         "capabilities": {},
                         "serverInfo": {
                             "name": server_name,
-                            "version": "v9.5.0",
+                            "version": "v9.9.0",
                         },
                     },
                 }
@@ -130,6 +130,20 @@ class FakeContext:
 
 
 class PluginTests(unittest.TestCase):
+    def test_auth_uses_profile_scoped_secret_api(self) -> None:
+        # Keep the suite stdlib-only while checking the host API boundary.
+        from types import SimpleNamespace
+
+        scope = SimpleNamespace(get_secret=mock.Mock(return_value="Bearer scoped-value"))
+        with mock.patch.dict(sys.modules, {"agent.secret_scope": scope}):
+            self.assertTrue(PLUGIN._auth_header() == "Bearer scoped-value", "credential did not come from profile scope")
+            scope.get_secret.assert_called_once_with("GOWA_AUTH_HEADER")
+            scope.get_secret.return_value = None
+            self.assertIsNone(PLUGIN._auth_header())
+            scope.get_secret.return_value = "Bearer bad\r\nheader"
+            with self.assertRaisesRegex(PLUGIN.GowaError, "invalid"):
+                PLUGIN._auth_header()
+
     def test_registration_includes_three_tools_and_setup_cli(self) -> None:
         context = FakeContext()
         PLUGIN.register(context)
@@ -388,7 +402,7 @@ class InstallerTests(unittest.TestCase):
                 _config_setter=lambda key, value, force=False: writes.append((key, value)),
                 _config_unsetter=removals.append,
             )
-        self.assertEqual(result["version"], "v9.5.0")
+        self.assertEqual(result["version"], "v9.9.0")
         self.assertEqual(
             removals,
             ["GOWA_AUTH_HEADER", "mcp_servers.gowa.headers.Authorization"],
@@ -455,10 +469,10 @@ class InstallerTests(unittest.TestCase):
 
     def test_release_assets_cover_supported_native_hosts(self) -> None:
         expected = {
-            ("Linux", "amd64"): ("whatsapp_9.5.0_linux_amd64.zip", "linux-amd64"),
-            ("Darwin", "x86_64"): ("whatsapp_9.5.0_darwin_amd64.zip", "darwin-amd64"),
-            ("Darwin", "aarch64"): ("whatsapp_9.5.0_darwin_arm64.zip", "darwin-arm64"),
-            ("Windows", "AMD64"): ("whatsapp_9.5.0_windows_amd64.zip", "windows-amd64.exe"),
+            ("Linux", "amd64"): ("whatsapp_9.9.0_linux_amd64.zip", "linux-amd64"),
+            ("Darwin", "x86_64"): ("whatsapp_9.9.0_darwin_amd64.zip", "darwin-amd64"),
+            ("Darwin", "aarch64"): ("whatsapp_9.9.0_darwin_arm64.zip", "darwin-arm64"),
+            ("Windows", "AMD64"): ("whatsapp_9.9.0_windows_amd64.zip", "windows-amd64.exe"),
         }
         for (system, machine), (asset, member) in expected.items():
             with self.subTest(system=system, machine=machine):
