@@ -26,7 +26,7 @@ Webhook configuration is intentionally not implemented. Once inbound WhatsApp me
 ## Requirements
 
 - For local installation: Linux x86_64 with a user `systemd` manager; macOS x86_64/arm64 in a logged-in GUI session; or Windows 10/11 x86_64 in a logged-in interactive session.
-- Hermes Agent 0.21.5 or newer.
+- Hermes Agent 0.23.1 or newer.
 - A WhatsApp account able to link another device.
 - Network access to WhatsApp; local installation also needs GitHub Releases access.
 

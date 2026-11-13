@@ -2,7 +2,7 @@ name: go-whatsapp
 version: 0.5.0
 kind: standalone
 manifest_version: 2
-requires_hermes: ">=0.21.5"
+requires_hermes: ">=0.23.1"
 description: Connect existing GOWA or install a pinned local service, plus the REST device tools missing from MCP.
 author: anpicasso
 license: MIT
