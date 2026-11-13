@@ -20,3 +20,20 @@ jobs:
         run: python -m py_compile __init__.py installer.py tests/test_setup.py
       - name: Test
         run: python -m unittest discover -v
+
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Windows PowerShell version
+        run: powershell.exe -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+      - name: Windows ACL and PowerShell 5.1 wrapper
+        run: >-
+          python -m unittest -v
+          tests.test_setup.InstallerTests.test_secure_windows_tree_leaves_existing_files_readable
+          tests.test_setup.InstallerTests.test_generated_run_ps1_survives_native_stderr_in_windows_powershell

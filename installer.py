@@ -628,6 +628,8 @@ def _install_windows_task(home: Path, binary: Path, user_id: str) -> Path:
     script_text = (
         "$ErrorActionPreference = 'Stop'\r\n"
         f"Set-Location -LiteralPath {_ps_literal(runtime)}\r\n"
+        # Windows PowerShell 5.1 wraps native stderr in ErrorRecords; Stop would kill GOWA on its first log line.
+        "$ErrorActionPreference = 'Continue'\r\n"
         f"& {_ps_literal(binary)} rest 1>$null 2>{_ps_literal(stderr_log)}\r\n"
         "exit $LASTEXITCODE\r\n"
     )
@@ -685,16 +687,23 @@ def _install_windows_task(home: Path, binary: Path, user_id: str) -> Path:
 
 
 def _secure_windows_tree(root: Path, sid: str) -> None:
-    result = subprocess.run(
+    # /T + (OI)(CI) leaves files with an empty DACL after /inheritance:r; grant on the root only.
+    # Then let every child inherit its ACEs.
+    _run_icacls(
         [
-            "icacls",
             str(root),
             "/inheritance:r",
             "/grant:r",
             f"*{sid}:(OI)(CI)F",
             "*S-1-5-18:(OI)(CI)F",
-            "/T",
-        ],
+        ]
+    )
+    _run_icacls([str(root / "*"), "/reset", "/T", "/C", "/Q"])
+
+
+def _run_icacls(arguments: list[str]) -> None:
+    result = subprocess.run(
+        ["icacls", *arguments],
         text=True,
         capture_output=True,
         stdin=subprocess.DEVNULL,

@@ -533,6 +533,16 @@ class InstallerTests(unittest.TestCase):
                 self.assertIn("1>$null", script)
                 self.assertIn("2>", script)
                 self.assertNotIn(credential, script)
+                self.assertLess(
+                    script.index("$ErrorActionPreference = 'Stop'"),
+                    script.index("$ErrorActionPreference = 'Continue'"),
+                )
+                self.assertLess(
+                    script.index("$ErrorActionPreference = 'Continue'"),
+                    script.index("& '"),
+                    "native stderr must not run under ErrorActionPreference=Stop",
+                )
+                self.assertIn("exit $LASTEXITCODE", script)
                 env_path = local / "gowa/runtime/.env"
                 self.assertEqual(INSTALLER._env_values(env_path)["APP_PORT"], "3456")
                 self.assertEqual(INSTALLER._managed_port(home, "Windows"), 3456)
@@ -542,16 +552,82 @@ class InstallerTests(unittest.TestCase):
         identity = INSTALLER.subprocess.CompletedProcess(
             [], 0, stdout='"DOMAIN\\User","S-1-5-21-123"\r\n', stderr=""
         )
-        secured = INSTALLER.subprocess.CompletedProcess([], 0, stdout="processed", stderr="")
-        with mock.patch.object(INSTALLER.subprocess, "run", side_effect=[identity, secured]) as run:
+        root = Path(r"C:\Users\User\AppData\Local\gowa")
+        root_acl = INSTALLER.subprocess.CompletedProcess([], 0, stdout="processed", stderr="")
+        child_acl = INSTALLER.subprocess.CompletedProcess([], 0, stdout="processed", stderr="")
+        with mock.patch.object(
+            INSTALLER.subprocess, "run", side_effect=[identity, root_acl, child_acl]
+        ) as run:
             user, sid = INSTALLER._windows_identity()
-            INSTALLER._secure_windows_tree(Path(r"C:\Users\User\AppData\Local\gowa"), sid)
+            INSTALLER._secure_windows_tree(root, sid)
         self.assertEqual((user, sid), (r"DOMAIN\User", "S-1-5-21-123"))
         acl = run.call_args_list[1].args[0]
+        self.assertEqual(acl[0], "icacls")
+        self.assertEqual(acl[1], str(root))
         self.assertIn("*S-1-5-21-123:(OI)(CI)F", acl)
         self.assertIn("*S-1-5-18:(OI)(CI)F", acl)
         self.assertIn("/inheritance:r", acl)
-        self.assertIn("/T", acl)
+        self.assertNotIn("/T", acl, "inheritance flags must not be applied to files")
+        children = run.call_args_list[2].args[0]
+        self.assertEqual(children, ["icacls", str(root / "*"), "/reset", "/T", "/C", "/Q"])
+
+    @unittest.skipUnless(sys.platform == "win32", "requires real Windows icacls semantics")
+    def test_secure_windows_tree_leaves_existing_files_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "gowa"
+            (root / "runtime" / "logs").mkdir(parents=True)
+            script = root / "run.ps1"
+            script.write_text("exit 0\r\n", encoding="utf-8")
+            env_path = root / "runtime" / ".env"
+            env_path.write_text("APP_PORT=3456\n", encoding="utf-8")
+            _, sid = INSTALLER._windows_identity()
+            INSTALLER._secure_windows_tree(root, sid)
+            self.assertTrue(script.read_text(encoding="utf-8"))
+            self.assertEqual(INSTALLER._env_values(env_path)["APP_PORT"], "3456")
+
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows PowerShell 5.1")
+    def test_generated_run_ps1_survives_native_stderr_in_windows_powershell(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            local = home / "LocalAppData"
+            stub = home / "stub-gowa.cmd"
+            stub.write_bytes(
+                b"@echo off\r\n"
+                b"echo gowa info first line 1>&2\r\n"
+                b"echo gowa info second line 1>&2\r\n"
+                b"exit /b 7\r\n"
+            )
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local)}, clear=False):
+                root = INSTALLER._windows_root(home)
+                (root / "runtime" / "logs").mkdir(parents=True)
+                INSTALLER._install_windows_task(home, stub, r"DOMAIN\User")
+            script = root / "run.ps1"
+            powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / (
+                "System32/WindowsPowerShell/v1.0/powershell.exe"
+            )
+            self.assertTrue(powershell.is_file(), powershell)
+            completed = INSTALLER.subprocess.run(
+                [
+                    str(powershell),
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            log = (root / "runtime" / "logs" / "gowa.err.log").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            self.assertEqual(completed.returncode, 7, completed.stdout + completed.stderr)
+            self.assertIn("gowa info first line", log)
+            self.assertIn("gowa info second line", log)
 
 
 if __name__ == "__main__":
