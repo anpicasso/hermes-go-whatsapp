@@ -623,7 +623,7 @@ class InstallerTests(unittest.TestCase):
                 check=False,
             )
             log = (root / "runtime" / "logs" / "gowa.err.log").read_text(
-                encoding="utf-8", errors="replace"
+                encoding="utf-16"
             )
             self.assertEqual(completed.returncode, 7, completed.stdout + completed.stderr)
             self.assertIn("gowa info first line", log)
