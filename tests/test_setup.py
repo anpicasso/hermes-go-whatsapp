@@ -121,12 +121,20 @@ class FakeContext:
     def __init__(self) -> None:
         self.tools: list[str] = []
         self.commands: list[str] = []
+        self.slash_commands: list[str] = []
+        self.hooks: list[str] = []
 
     def register_tool(self, **kwargs) -> None:
         self.tools.append(kwargs["name"])
 
     def register_cli_command(self, **kwargs) -> None:
         self.commands.append(kwargs["name"])
+
+    def register_command(self, name: str, handler, **kwargs) -> None:
+        self.slash_commands.append(name)
+
+    def register_hook(self, name: str, handler, **kwargs) -> None:
+        self.hooks.append(name)
 
 
 class PluginTests(unittest.TestCase):
@@ -144,14 +152,16 @@ class PluginTests(unittest.TestCase):
             with self.assertRaisesRegex(PLUGIN.GowaError, "invalid"):
                 PLUGIN._auth_header()
 
-    def test_registration_includes_three_tools_and_setup_cli(self) -> None:
+    def test_registration_includes_four_tools_and_setup_cli(self) -> None:
         context = FakeContext()
         PLUGIN.register(context)
         self.assertEqual(
             context.tools,
-            ["gowa_devices", "gowa_device_login", "gowa_device_remove"],
+            ["gowa_devices", "gowa_device_login", "gowa_device_remove", "gowa_watch"],
         )
         self.assertEqual(context.commands, ["gowa"])
+        self.assertEqual(context.slash_commands, ["gowa-watch"])
+        self.assertEqual(context.hooks, ["pre_gateway_dispatch"])
 
     def test_code_login_validates_before_creating_and_refuses_duplicate_number(self) -> None:
         calls: list[tuple[str, str, object]] = []

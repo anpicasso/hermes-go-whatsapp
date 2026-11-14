@@ -1,17 +1,20 @@
 name: go-whatsapp
-version: 0.5.0
+version: 0.6.0
 kind: standalone
 manifest_version: 2
 requires_hermes: ">=0.23.1"
-description: Connect existing GOWA or install a pinned local service, plus the REST device tools missing from MCP.
+description: Connect existing GOWA or install a pinned local service, plus REST device tools and one opt-in same-session webhook watch.
 author: anpicasso
 license: MIT
 homepage: https://github.com/anpicasso/hermes-go-whatsapp
-tags: [whatsapp, mcp, devices]
+tags: [whatsapp, mcp, devices, webhook]
 provides_tools:
   - gowa_devices
   - gowa_device_login
   - gowa_device_remove
+  - gowa_watch
+provides_hooks:
+  - pre_gateway_dispatch
 capabilities: []
 config_schema:
   base_url:
@@ -22,3 +25,11 @@ config_schema:
     type: number
     default: 15
     description: REST request timeout for ordinary operations (1-60 seconds).
+  watch_enabled:
+    type: boolean
+    default: false
+    description: Opt in to the same-session GOWA webhook watch. Requires allow_gateway_injection and a dedicated signed webhook route.
+  watch_route:
+    type: string
+    default: gowa-session-watch
+    description: Exact Hermes webhook route name whose source.chat_name is webhook/<route>; no other route is consumed.

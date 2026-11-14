@@ -351,12 +351,26 @@ REMOVE_SCHEMA = {
 def register(ctx: Any) -> None:
     global _CTX
     _CTX = ctx
+    from . import session_watch
+
+    session_watch.configure(ctx)
+    if callable(getattr(ctx, "on_unload", None)):
+        ctx.on_unload(session_watch.shutdown)
+    ctx.register_hook("pre_gateway_dispatch", session_watch.pre_gateway_dispatch)
+    ctx.register_command(
+        "gowa-watch",
+        session_watch.command,
+        description="Arm, inspect, or stop one same-session GOWA webhook watch (WAIT/REPORT).",
+        args_hint="start|status|stop",
+    )
     for name, schema, handler, description, emoji in (
         ("gowa_devices", DEVICES_SCHEMA, _devices, "List or inspect GOWA WhatsApp device slots", "📱"),
         ("gowa_device_login", LOGIN_SCHEMA, _device_login, "Provision and pair a GOWA WhatsApp device", "🔗"),
         ("gowa_device_remove", REMOVE_SCHEMA, _device_remove, "Irreversibly remove a GOWA WhatsApp device", "🗑️"),
     ):
         ctx.register_tool(name=name, toolset="gowa", schema=schema, handler=_safe(handler), description=description, emoji=emoji)
+    ctx.register_tool(name="gowa_watch", toolset="gowa", schema=session_watch.WATCH_SCHEMA,
+                      handler=session_watch.tool, description="Follow a WhatsApp chat in this session", emoji="👂")
     from . import installer
 
     ctx.register_cli_command(

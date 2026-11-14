@@ -7,7 +7,8 @@ This plugin connects to a GOWA process that holds WhatsApp linked-device keys. I
 - **Hermes → local GOWA:** authenticated HTTP on loopback. The generated Authorization value lives in the active Hermes profile `.env` and is referenced from MCP configuration through `${GOWA_AUTH_HEADER}`.
 - **Hermes → existing GOWA:** HTTPS plus Bearer Auth when remote; unauthenticated HTTP is allowed only on loopback. Setup verifies both REST and MCP before saving the connection.
 - **GOWA → WhatsApp:** an unofficial `whatsmeow` session. It is not operated, supported, or guaranteed by Meta.
-- **Filesystem:** `whatsapp.db` contains device/session cryptographic material; `chatstorage.db` can contain message metadata and content.
+- **GOWA → Hermes watch route:** GOWA signs the raw webhook body with `X-Hub-Signature-256`; Hermes validates the HMAC before `pre_gateway_dispatch` sees the event. The plugin consumes only the exact configured `webhook/<route>` and treats every body as untrusted data. The route is not a general inbound gateway; the plugin has no outbound send path.
+- **Filesystem:** `whatsapp.db` contains device/session cryptographic material; `chatstorage.db` can contain message metadata and content. The watch stores only its slot/chat binding, owner session key/id, watch reference/generation, the latest delivered message id/time, one follow-up deadline/token, and `(slot, message id)` dedupe rows in a private plugin-data SQLite file. It does not store message bodies.
 - **Pairing:** a QR image or phone code authorizes a new linked device. Anyone who obtains it before expiry may link the account.
 
 ## Installer controls
@@ -43,7 +44,8 @@ The macOS LaunchAgent and Windows `InteractiveToken` task deliberately run only 
 - `gowa_devices` is read-only but may return personal metadata.
 - `gowa_device_login` is permitted only for an explicit user pairing request. It validates phone-code input before creating or pairing a slot, rejects numbers already present in another device's metadata, and refuses to re-pair a slot that already has a session. QR pairing cannot deduplicate by number before the scan because the account is not known yet. The preflight is not an atomic server-side uniqueness constraint, so concurrent operators can still race it. The tool replaces the unauthenticated static QR URL with a private local file path.
 - `gowa_device_remove` requires an exact identifier and `confirm: true` after explicit approval. Local purge errors fail closed; GOWA's remote WhatsApp unlink is best-effort.
-- There is no generic REST passthrough, webhook tool, passkey tool, profile mutation tool, or Chatwoot administration tool.
+- `gowa_watch` is an agent-callable tool; `/gowa-watch` is an optional slash interface to the same watch. The tool derives its destination from Hermes runtime session context and rejects destination arguments and unbound callers. It binds one watch to the calling conversation, refuses another session's watch, accepts direct chats only, and schedules external text with a trusted static header, JSON-encoded body, and native internal-notification footer. `wait` arms one five-minute follow-up for the exact delivered message; `handled` cancels the pending token. The plugin has no send tool and cannot configure webhooks. Replies, if any, are the agent's separate existing WhatsApp tools acting under the user's current authorization; the prompt tells the agent not to send without that authorization.
+- There is no generic REST passthrough, webhook configuration tool, passkey tool, profile mutation tool, or Chatwoot administration tool.
 
 ## Remote deployments
 

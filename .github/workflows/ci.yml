@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile
-        run: python -m py_compile __init__.py installer.py tests/test_setup.py
+        run: python -m py_compile __init__.py installer.py session_watch.py tests/test_setup.py tests/test_session_watch.py
       - name: Test
         run: python -m unittest discover -v
 

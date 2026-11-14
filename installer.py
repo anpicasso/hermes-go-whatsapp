@@ -291,7 +291,7 @@ def _verify_existing(base_url: str, auth_header: str | None) -> str:
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "hermes-go-whatsapp-setup", "version": "0.5.0"},
+                "clientInfo": {"name": "hermes-go-whatsapp-setup", "version": "0.6.0"},
             },
         }
     ).encode("utf-8")

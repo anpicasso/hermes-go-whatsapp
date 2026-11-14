@@ -14,14 +14,116 @@ A Hermes Agent `go-whatsapp` plugin that connects an existing [GOWA](https://git
   - `gowa_devices` — list or inspect device slots.
   - `gowa_device_login` — create a slot if needed, then start QR or phone-code pairing.
   - `gowa_device_remove` — purge a device and request unlinking after explicit confirmation.
+- An agent-callable `gowa_watch` tool (with optional `/gowa-watch` slash command) that routes one exact GOWA webhook slot/chat into the conversation that armed it. It consumes a dedicated signed route, supports an explicit WAIT/REPORT follow-up, and never configures or replaces webhooks.
 
 The plugin does **not** supervise the daemon from Hermes' runtime. Hermes loads plugins in CLI, gateway, cron, and worker processes; tying a long-lived server to any one of them creates duplicate-process and orphan-cleanup problems. The one-shot setup command installs it, while the operating system's native user supervisor owns its lifetime.
 
-## Scope: outbound agent messaging
+## Scope: outbound tools plus one opt-in inbound watch
 
-This plugin is deliberately an outbound-control integration: it lets an agent use the user's linked WhatsApp account to send messages to multiple recipients and manage the GOWA device slots needed for that work. It does **not** subscribe to or ingest the account's incoming message stream.
+By default this plugin is an outbound-control integration: it lets an agent use the user's linked WhatsApp account to send messages to multiple recipients and manage the GOWA device slots needed for that work. It does **not** subscribe to or ingest the account's incoming message stream unless the explicit watch below is enabled.
 
-Webhook configuration is intentionally not implemented. Once inbound WhatsApp messages should become Hermes conversations, use Hermes' built-in WhatsApp gateway instead; duplicating it through GOWA webhooks would add a second listener and an unnecessary prompt-injection surface outside this plugin's purpose.
+Webhook configuration remains intentionally not implemented. This plugin never writes GOWA webhook settings, never creates a listener, and never replaces an existing device webhook. The only inbound path is the opt-in, single-watch bridge described next, fed by a dedicated Hermes route the operator configures. General inbound WhatsApp conversations still belong in Hermes' built-in WhatsApp gateway.
+
+## Same-session webhook watch (opt-in, WAIT/REPORT)
+
+The watch continues the **existing Hermes conversation that armed it** instead of creating a new webhook session for every WhatsApp message. A dedicated signed Hermes route is consumed by the `pre_gateway_dispatch` hook only when its `source.chat_name` is exactly `webhook/<watch_route>`; matching events are deduplicated by `(session_id, message id)` and scheduled into the arming session with `ctx.inject_message`. No LLM turn runs for the webhook itself, no HTTP server is started, and the plugin itself has no WhatsApp send path.
+
+### Prerequisites (operator-owned)
+
+1. Configure a GOWA webhook target for the dedicated route. Replacing an existing device webhook requires explicit operator consent.
+2. Configure the Hermes webhook route (the plugin does not write this):
+
+```yaml
+# gateway webhook route name: gowa-session-watch
+# path: /webhooks/gowa-session-watch
+signature: github          # GOWA signs the raw body in X-Hub-Signature-256
+filters:
+  field: session_id
+  equals: hermes-watch-test   # the GOWA slot this route accepts
+toolsets: []
+deliver: log
+prompt: "GOWA watch fallback: no action."   # only reached if the plugin is disabled
+```
+
+Use the route's real HMAC secret in both GOWA (`WHATSAPP_WEBHOOK_SECRET`) and the Hermes route configuration. Unsigned requests are rejected before the hook runs.
+
+3. Enable the watch and the separate injection permission:
+
+```bash
+hermes config set plugins.entries.go-whatsapp.settings.watch_enabled true
+hermes config set plugins.entries.go-whatsapp.settings.watch_route gowa-session-watch
+hermes config set plugins.entries.go-whatsapp.allow_gateway_injection true
+```
+
+`allow_gateway_injection` is deliberately separate from `watch_enabled`: the watch can only schedule into an existing session after the operator grants that capability. The plugin must run in-process (`plugins.isolation: in_process`, the default); under `plugins.isolation: host` the hook receives a placeholder session store and consumes without injecting.
+
+### Operate
+
+Ask Hermes naturally: **“Listen to this WhatsApp conversation for an hour”** or **“Stop following that chat.”** Hermes resolves the account slot and contact, then calls `gowa_watch` with `action: start|status|stop`. Start takes `device_id` (the GOWA slot), `chat_jid`, and optional `minutes`. The destination is derived from the calling session, never supplied by the model. Listening does not authorize sending replies.
+
+Each delivered watch message asks the **same conversation** to choose one of three outcomes:
+
+- **WAIT** — call `gowa_watch` with `action: "wait"` and the prompt's `message_id` exactly once. This arms one follow-up five minutes after the last inbound message; a newer inbound message reschedules it. After a successful registration the model replies exactly `NO_REPLY`, which the host's native response filter suppresses.
+- **REPLY** — only through the existing WhatsApp tools, and only if the user already authorized replies in this session. The plugin has no send tool.
+- **REPORT** — report back in the Hermes conversation exactly as the user asked (verbatim or summary).
+
+After a reply or report, `action: "handled"` with that `message_id` closes the token and cancels any pending follow-up. `status` reports the watch reference, generation, and the exact message id of a pending, delivered, handled, or failed follow-up.
+
+The five-minute follow-up is delivered by one supervised gateway task started from `pre_gateway_dispatch`. The tool writes the deadline and wakes that task (starting it only when the hook's task is absent); it does not create a timer in a tool worker or a new daemon. The task is cancelled by `ctx.on_unload`, and any inbound hook can restart it after a plugin reload so an overdue persisted follow-up is delivered. If the gateway process exits and no further inbound event arrives, no follow-up can be delivered; this is a bounded best-effort seam, not a durable scheduler.
+
+The slash commands remain optional; users do not need to type them. From the conversation that should receive the messages:
+
+```text
+/gowa-watch start <session_id> <chat_jid> [minutes]
+/gowa-watch status
+/gowa-watch stop
+```
+
+- `<session_id>` is the top-level GOWA **slot** id from the webhook payload (`session_id`), not `device_id` (that field is the account's own WhatsApp JID). A payload without `session_id` is ignored; the plugin does not guess.
+- `<chat_jid>` must be a direct chat JID (`...@s.whatsapp.net` or `...@lid`). Groups, newsletters, and broadcasts are refused.
+- `minutes` defaults to 60 and is capped at 1440 (24 hours).
+- Exactly one watch exists per profile, owned by the arming conversation's session key. Another conversation is refused without leaking the watched target; after `/new` the same conversation can inspect or stop the stale pin.
+
+Accepted payload shape ([GOWA v9.9.0 webhook docs](https://github.com/aldinokemal/go-whatsapp-web-multidevice/blob/v9.9.0/docs/webhook-payload.md)):
+
+```json
+{
+  "event": "message",
+  "device_id": "15550000000@s.whatsapp.net",
+  "session_id": "hermes-watch-test",
+  "payload": {
+    "id": "3EB0...",
+    "chat_id": "15551234567@s.whatsapp.net",
+    "is_from_me": false,
+    "body": "hello"
+  }
+}
+```
+
+Only `event: message`, `is_from_me: false`, an exact slot/chat match, and a non-empty text `body` are scheduled. The body is truncated at 4000 characters. Injected text has a trusted static header and metadata, carries the body as a JSON-encoded string labelled external and untrusted, and ends with the gateway's native internal-notification footer. The prompt tells the agent to treat the body as data, not instructions; this framing is not a guarantee against prompt injection.
+
+### Limits
+
+- The watch is a convenience bridge, not a general WhatsApp gateway. It has no media, reactions, receipts, edits, groups, or outbound send. Replies, if any, use the separately installed GOWA MCP tools under the user's existing authorization.
+- Every matching text message schedules a turn; there is no batching, rate limit, or quiet hours. Arm it for a bounded trial rather than leaving it on a busy chat.
+- Exactly one follow-up is pending per watch. `wait` for the same message is idempotent (it does not extend the deadline); a new inbound message reschedules the pending follow-up to itself; `stop`, re-arm, expiry, `/new`, and `handled` cancel it. A delivered or handled message cannot be re-armed, so one message cannot self-rewait indefinitely. Stale `message_id` or follow-up tokens are refused and reported.
+- The follow-up task exists only in the live in-process gateway. It survives an exiting tool worker, but not a gateway process exit: after a restart, an overdue follow-up is delivered on the next inbound event that reaches `pre_gateway_dispatch`; without one it remains pending until expiry. Under `plugins.isolation: host` injection is unavailable, so the watch consumes without delivering.
+- The session id is captured at arming and rechecked against the live `SessionStore` before every delivery, including the follow-up. `/new` (or any session-id change) stops the watch instead of silently delivering into a different transcript. The check and the host's scheduling are separate steps, so a `/new` racing the schedule can still land in the new transcript; this is best-effort pinning, not a lock.
+- Dedupe uses a SQLite claim keyed by `(session_id, message id)` and is retained for 24 hours. A failed schedule releases the claim; a rejected message is never marked scheduled.
+- `ctx.inject_message` returning `True` means the host accepted the message for **scheduling**, not that a turn ran or a reply was delivered. Delivery is not transactional or exactly-once: a crash after scheduling can lose one message, and a crash after a claim but before scheduling delays retry by up to 5 minutes.
+- A follow-up injection refusal is retried at most three times, one minute apart, then reported as `follow-up FAILED` in status. `wait` returns `ok: false` when no live supervisor can be started; it never silently arms an undeliverable deadline.
+- GOWA sees HTTP 202 when the route is consumed even if injection was refused. `202` means "not sent to a fallback webhook LLM", not "delivered to the session"; check `/gowa-watch status` and the gateway log.
+- Expiry is checked lazily on the next matching event, status, command, or supervisor wake. There is no persistent queue and no new background daemon.
+
+### Verify
+
+```bash
+python -m unittest discover -s tests -v
+hermes plugins doctor . --ci
+hermes plugins validate .
+```
+
+The test suite shortens `FOLLOWUP_SECONDS` to sub-second values and also advances a fake clock; production remains 300 seconds. The host-dispatcher tests run when Hermes is importable (`PYTHONPATH` pointing at the installed source) and skip otherwise.
 
 ## Requirements
 
@@ -212,7 +314,7 @@ Requires an exact `device_id` and `confirm: true`. Removal purges the locally st
 
 The REST API is larger than the native MCP surface, but more tools are not automatically better. This plugin does not expose:
 
-- Device webhook reads/writes or automatic webhook setup. Inbound WhatsApp conversations belong in Hermes' built-in WhatsApp gateway; this plugin is outbound-only.
+- Device webhook reads/writes or automatic webhook setup. The only inbound path is the explicit, opt-in same-session watch above; it never configures GOWA and never replaces an existing device webhook. General inbound WhatsApp conversations remain out of scope.
 - Passkey/WebAuthn flows, which belong in an interactive browser.
 - Extra REST wrappers for chat history synchronization, participant exports, newsletters, or Chatwoot administration. GOWA v9.9.0 itself exposes newsletter operations through native MCP.
 - Profile/avatar/privacy mutations, presence simulation, or a generic arbitrary REST tool.
@@ -230,6 +332,9 @@ plugins:
       settings:
         base_url: http://127.0.0.1:49152  # setup writes the selected or external URL
         timeout_seconds: 15
+        watch_enabled: false               # opt-in; see the same-session watch section
+        watch_route: gowa-session-watch    # exact route name; no other route is consumed
+      allow_gateway_injection: false       # separate permission required to schedule into a session
 ```
 
 Plain HTTP and unauthenticated connections are accepted only for loopback. Remote servers must use HTTPS plus Bearer Auth. Authentication is read through Hermes' profile-aware credential chain from `GOWA_AUTH_HEADER`; it is never stored inside the plugin directory. When no auth is needed, setup removes stale GOWA Authorization configuration instead of sending an empty header.
@@ -323,6 +428,8 @@ Read [docs/SECURITY.md](docs/SECURITY.md) before linking an account.
 
 - GOWA and `whatsmeow` are unofficial WhatsApp integrations. Meta may change the protocol or restrict an account.
 - Session databases are bearer credentials: filesystem access can become account access.
+- The opt-in watch trusts the dedicated Hermes route only after Hermes validates its HMAC signature. It logs no sender identity or message body, injects a trusted header with a JSON-encoded untrusted body plus the native internal-notification footer, and has no outbound send path. `ctx.inject_message` acceptance means scheduling only, not delivery; dedupe is not a transactional exactly-once guarantee. A `wait` follow-up is one supervised gateway task, not a durable scheduler; after a gateway process exit it needs a later inbound event to recover.
+- One watch exists per profile, owned by the arming session. Changing that session's id (`/new`) stops delivery rather than retargeting the new transcript. A pending follow-up carries the watch generation and exact message id, so stale `handled`/`wait` calls are refused rather than cancelling a newer follow-up.
 - GOWA serves `/statics` before Basic Auth. Loopback-only binding contains that exposure to the host, and this plugin copies QR images into a private file rather than returning the public URL.
 - Basic Auth authorizes every configured device; `device_id` is routing, not tenant isolation.
 - macOS LaunchAgents exist only while that user's GUI login domain exists. A pre-login or headless daemon requires an administrator-installed LaunchDaemon and is intentionally out of scope.
